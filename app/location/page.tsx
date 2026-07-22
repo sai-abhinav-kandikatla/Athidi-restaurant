@@ -1,0 +1,2 @@
+import { PublicPage } from "../components/public-page";
+export default function LocationPage() { return <PublicPage eyebrow="Come, be our guest" title="Your table is waiting." intro="Open every day for relaxed lunches, family dinners and everything in between."><div className="location-panel"><div><span>OPENING HOURS</span><h2>11:00 AM — 11:00 PM</h2><p>Monday through Sunday</p></div><div><span>ADDRESS</span><h2>Athidhi Family Restaurant</h2><p>Complete restaurant address to be confirmed in Settings.</p></div></div></PublicPage>; }
