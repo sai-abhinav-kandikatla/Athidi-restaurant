@@ -41,44 +41,28 @@ export interface FAQ {
 
 export const CATEGORIES: Category[] = [
   { id: "cat-1", name: "Chef Specials", slug: "chef-specials", icon: "Crown" },
-  { id: "cat-2", name: "Signature Starters", slug: "signature-starters", icon: "Sparkles" },
-  { id: "cat-3", name: "Veg Starters", slug: "veg-starters", icon: "Leaf" },
-  { id: "cat-4", name: "Non-Veg Starters", slug: "non-veg-starters", icon: "UtensilsCrossed" },
-  { id: "cat-5", name: "Tandoor & Kebabs", slug: "tandoor-kebabs", icon: "Flame" },
-  { id: "cat-6", name: "Hyderabadi Dum Biryani", slug: "hyderabadi-biryani", icon: "ChefHat" },
-  { id: "cat-7", name: "Mandi", slug: "mandi", icon: "Utensils" },
-  { id: "cat-8", name: "Chicken Curries", slug: "chicken-curries", icon: "Flame" },
-  { id: "cat-9", name: "Mutton Curries", slug: "mutton-curries", icon: "UtensilsCrossed" },
-  { id: "cat-10", name: "Seafood", slug: "seafood", icon: "Fish" },
-  { id: "cat-11", name: "Veg Curries", slug: "veg-curries", icon: "Salad" },
-  { id: "cat-12", name: "Indian Breads", slug: "indian-breads", icon: "Cookie" },
-  { id: "cat-13", name: "Rice & Fried Rice", slug: "rice-fried-rice", icon: "ChefHat" },
-  { id: "cat-14", name: "Noodles", slug: "noodles", icon: "Soup" },
-  { id: "cat-15", name: "Soups", slug: "soups", icon: "Soup" },
-  { id: "cat-16", name: "Salads", slug: "salads", icon: "Salad" },
-  { id: "cat-17", name: "Desserts", slug: "desserts", icon: "Candy" },
-  { id: "cat-18", name: "Beverages", slug: "beverages", icon: "GlassWater" }
+  { id: "cat-2", name: "Biryani", slug: "biryani", icon: "ChefHat" },
+  { id: "cat-3", name: "Starters", slug: "starters", icon: "Flame" },
+  { id: "cat-4", name: "Chicken Curries", slug: "chicken-curries", icon: "UtensilsCrossed" },
+  { id: "cat-5", name: "Veg Curries", slug: "veg-curries", icon: "Salad" },
+  { id: "cat-6", name: "Mutton Curries", slug: "mutton-curries", icon: "Utensils" },
+  { id: "cat-7", name: "Seafood", slug: "seafood", icon: "Fish" },
+  { id: "cat-8", name: "Naans & Breads", slug: "indian-breads", icon: "Cookie" },
+  { id: "cat-9", name: "Fried Rice", slug: "rice-fried-rice", icon: "Soup" },
+  { id: "cat-10", name: "Others & Drinks", slug: "beverages", icon: "GlassWater" }
 ];
 
 // Helper to map category name to category slug
 const categoryToSlug: { [key: string]: string } = {
   "Chef Specials": "chef-specials",
-  "Signature Starters": "signature-starters",
-  "Veg Starters": "veg-starters",
-  "Non-Veg Starters": "non-veg-starters",
-  "Tandoor & Kebabs": "tandoor-kebabs",
-  "Hyderabadi Dum Biryani": "hyderabadi-biryani",
-  "Mandi": "mandi",
+  "Biryani": "biryani",
+  "Starters": "starters",
   "Chicken Curries": "chicken-curries",
+  "Veg Curries": "veg-curries",
   "Mutton Curries": "mutton-curries",
   "Seafood": "seafood",
-  "Veg Curries": "veg-curries",
   "Indian Breads": "indian-breads",
   "Rice & Fried Rice": "rice-fried-rice",
-  "Noodles": "noodles",
-  "Soups": "soups",
-  "Salads": "salads",
-  "Desserts": "desserts",
   "Beverages": "beverages"
 };
 

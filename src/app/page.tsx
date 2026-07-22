@@ -16,7 +16,7 @@ export default function LandingPage() {
   const specials = MENU_ITEMS.filter((item) => item.isChefSpecial).slice(0, 3);
   
   // Signature dishes list
-  const signatures = MENU_ITEMS.filter((item) => item.category === "hyderabadi-biryani").slice(0, 3);
+  const signatures = MENU_ITEMS.filter((item) => item.category === "biryani").slice(0, 3);
 
   const toggleFaq = (index: number) => {
     setOpenFaqIndex(openFaqIndex === index ? null : index);
