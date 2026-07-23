@@ -4,7 +4,7 @@ import { LoaderCircle, LockKeyhole, LogIn } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { Brand } from "../../components/brand";
-import { getBrowserSupabase } from "../../lib/supabase/client";
+import { apiRequest } from "../../lib/api/client";
 
 export default function AdminLoginPage() {
   const [email, setEmail] = useState("");
@@ -27,20 +27,22 @@ export default function AdminLoginPage() {
 
   async function signIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const supabase = getBrowserSupabase();
-    if (!supabase) {
-      setError("Supabase is not configured for this application.");
-      return;
-    }
     setBusy(true);
     setError(null);
-    const result = await supabase.auth.signInWithPassword({ email, password });
-    if (result.error) {
-      setError(result.error.message);
+    try {
+      const result = await apiRequest<{ redirectTo: string }>("/api/v1/auth/session", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      const requested = new URLSearchParams(window.location.search).get("next");
+      const destination = requested?.startsWith("/admin/") && !requested.startsWith("//")
+        ? requested
+        : result.redirectTo;
+      window.location.assign(destination);
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "Sign-in could not be completed.");
       setBusy(false);
-      return;
     }
-    window.location.assign("/admin");
   }
 
   return (

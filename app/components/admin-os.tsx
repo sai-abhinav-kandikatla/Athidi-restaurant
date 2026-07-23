@@ -8,6 +8,7 @@ import {
   ChefHat,
   ChevronRight,
   CircleDollarSign,
+  ClipboardList,
   Clock,
   Flame,
   LayoutDashboard,
@@ -19,7 +20,9 @@ import {
   ShoppingBag,
   Store,
   Table2,
+  Timer,
   UserCheck,
+  Utensils,
   Volume2,
   VolumeX,
   X,
@@ -57,9 +60,52 @@ type ConnectionStatus = "connected" | "reconnecting" | "offline";
 type ActivityLogItem = {
   id: string;
   time: string;
-  type: "order" | "request" | "kitchen" | "session" | "system";
+  type: "order" | "request" | "kitchen" | "waiter" | "session" | "system";
   icon: string;
   message: string;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  createdAt: string;
+  data: Record<string, unknown>;
+};
+
+type AuditRecord = {
+  id: number;
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  data: Record<string, unknown>;
+  created_at: string;
+};
+
+type OrderLifecycle = RestaurantOrder & {
+  accepted_at?: string | null;
+  preparing_at?: string | null;
+  ready_at?: string | null;
+  billed_at?: string | null;
+};
+
+type WaiterMetrics = {
+  asOf: string;
+  todayDeliveries: number;
+  averageFoodDeliverySeconds: number;
+  averageWaterResponseSeconds: number;
+  averageBillResponseSeconds: number;
+  averageWaiterResponseSeconds: number;
+  pendingReadyOrders: number;
+  pendingServiceRequests: number;
+  activeWaiterTasks: number;
+  pendingTasks: number;
+  completedTasks: number;
+};
+
+type WaiterAssignment = {
+  entityType: "order" | "service_request";
+  entityId: string;
+  assignedStaffId: string;
+  assignedStaffName: string;
+  assignedAt: string;
 };
 
 type RestaurantProfile = {
@@ -92,6 +138,7 @@ type OperationalData = {
   restaurant: RestaurantProfile | null;
   branch: BranchProfile | null;
   health: SystemHealth;
+  waiterMetrics: WaiterMetrics;
 };
 
 type SystemHealth = {
@@ -102,9 +149,26 @@ type SystemHealth = {
   connection: "healthy" | "disabled";
 };
 
-type OperationsResponse = Omit<OperationalData, "health"> & {
+type OperationsResponse = Omit<OperationalData, "health" | "waiterMetrics"> & {
   health: SystemHealth;
-  audit: { id: number; action: string; entity_type: string | null; entity_id: string | null; data: Record<string, unknown>; created_at: string }[];
+  audit: AuditRecord[];
+  serverTime: string;
+  waiterMetrics: WaiterMetrics;
+  assignments: WaiterAssignment[];
+};
+
+const emptyWaiterMetrics: WaiterMetrics = {
+  asOf: "",
+  todayDeliveries: 0,
+  averageFoodDeliverySeconds: 0,
+  averageWaterResponseSeconds: 0,
+  averageBillResponseSeconds: 0,
+  averageWaiterResponseSeconds: 0,
+  pendingReadyOrders: 0,
+  pendingServiceRequests: 0,
+  activeWaiterTasks: 0,
+  pendingTasks: 0,
+  completedTasks: 0,
 };
 
 const emptyData: OperationalData = {
@@ -116,6 +180,7 @@ const emptyData: OperationalData = {
   payments: [],
   restaurant: null,
   branch: null,
+  waiterMetrics: emptyWaiterMetrics,
   health: {
     authentication: "disabled",
     database: "disabled",
@@ -152,12 +217,16 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifFilter, setNotifFilter] = useState<string>("all");
   const [serveConfirmOrder, setServeConfirmOrder] = useState<RestaurantOrder | null>(null);
-  const [assignments, setAssignments] = useState<Record<string, string>>({});
+  const [assignments, setAssignments] = useState<Record<string, WaiterAssignment>>({});
+  const [pendingActionId, setPendingActionId] = useState<string | null>(null);
 
   const tickerTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const prevOrderCount = useRef(0);
-  const prevRequestCount = useRef(0);
+  const realtimeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const serverClockOffset = useRef(0);
+  const previousOrderStatuses = useRef<Map<string, OrderStatus>>(new Map());
+  const previousRequestStatuses = useRef<Map<string, ServiceRequest["status"]>>(new Map());
+  const operationalSnapshotReady = useRef(false);
   const visibleNavItems = useMemo(() => {
     if (staff.roleName === "CHEF") return navItems.filter((item) => item.label === "Kitchen");
     if (staff.roleName === "WAITER") return navItems.filter((item) => item.label === "Waiter");
@@ -170,6 +239,11 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
     const slug = next.toLowerCase().replaceAll(" ", "-");
     router.push(`/admin/${slug}`);
   }
+
+  const appendActivities = useCallback((items: ActivityLogItem[]) => {
+    if (!items.length) return;
+    setActivityLogs((current) => mergeActivityLogs(items, current));
+  }, []);
 
   /* ─── Web Audio Chime Helper ─── */
   const playChime = useCallback(
@@ -197,7 +271,7 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
   /* ─── 1-Second Ticker for Timers & Clock ─── */
   useEffect(() => {
     tickerTimer.current = setInterval(() => {
-      setNowTime(Date.now());
+      setNowTime(Date.now() + serverClockOffset.current);
     }, 1000);
     return () => {
       if (tickerTimer.current) clearInterval(tickerTimer.current);
@@ -210,6 +284,11 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
       if (!quiet) setLoading(true);
       try {
         const payload = await apiRequest<OperationsResponse>("/api/v1/operations");
+        const serverTimestamp = new Date(payload.serverTime).getTime();
+        if (Number.isFinite(serverTimestamp)) {
+          serverClockOffset.current = serverTimestamp - Date.now();
+          setNowTime(serverTimestamp);
+        }
         const orders = (payload.orders ?? []).map((order) => ({
           ...order,
           subtotal: Number(order.subtotal),
@@ -224,11 +303,77 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
           })),
         }));
         const requests = payload.requests ?? [];
+        const transitionActivities: ActivityLogItem[] = [];
 
-        if (orders.length > prevOrderCount.current && prevOrderCount.current > 0) playChime(880, 0.3);
-        if (requests.length > prevRequestCount.current && prevRequestCount.current > 0) playChime(660, 0.3);
-        prevOrderCount.current = orders.length;
-        prevRequestCount.current = requests.length;
+        if (operationalSnapshotReady.current) {
+          for (const order of orders) {
+            const previousStatus = previousOrderStatuses.current.get(order.id);
+            if (order.status === "READY" && previousStatus !== "READY") {
+              transitionActivities.push(
+                makeActivityLog({
+                  id: `live-order-ready-${order.id}`,
+                  action: "ORDER_READY",
+                  entityType: "order",
+                  entityId: order.id,
+                  createdAt: orderTimestamp(order, "ready_at") ?? new Date().toISOString(),
+                  message: `Food ready · Table ${tableNumber(order)} · Order #AT-${order.order_number}`,
+                }),
+              );
+            }
+            if (order.status === "SERVED" && previousStatus && previousStatus !== "SERVED") {
+              transitionActivities.push(
+                makeActivityLog({
+                  id: `live-food-served-${order.id}`,
+                  action: "FOOD_SERVED",
+                  entityType: "order",
+                  entityId: order.id,
+                  createdAt: order.served_at ?? new Date().toISOString(),
+                  message: `Serve completed · Table ${tableNumber(order)} · Order #AT-${order.order_number}`,
+                }),
+              );
+            }
+          }
+
+          for (const request of requests) {
+            const previousStatus = previousRequestStatuses.current.get(request.id);
+            if (request.status !== "RESOLVED" && previousStatus === undefined) {
+              transitionActivities.push(
+                makeActivityLog({
+                  id: `live-request-created-${request.id}`,
+                  action: "REQUEST_CREATED",
+                  entityType: "service_request",
+                  entityId: request.id,
+                  createdAt: request.created_at,
+                  message: `${requestTypeLabel(request.request_type)} · Table ${request.table_session?.table?.number ?? "—"}`,
+                }),
+              );
+            }
+            if (request.status === "RESOLVED" && previousStatus && previousStatus !== "RESOLVED") {
+              transitionActivities.push(
+                makeActivityLog({
+                  id: `live-request-resolved-${request.id}`,
+                  action: "REQUEST_RESOLVED",
+                  entityType: "service_request",
+                  entityId: request.id,
+                  createdAt: request.resolved_at ?? new Date().toISOString(),
+                  message: `Resolve completed · ${requestTypeLabel(request.request_type)} · Table ${request.table_session?.table?.number ?? "—"}`,
+                }),
+              );
+            }
+          }
+        }
+
+        previousOrderStatuses.current = new Map(orders.map((order) => [order.id, order.status]));
+        previousRequestStatuses.current = new Map(requests.map((request) => [request.id, request.status]));
+        operationalSnapshotReady.current = true;
+
+        if (transitionActivities.length) {
+          const hasFoodReady = transitionActivities.some((entry) => entry.action === "ORDER_READY");
+          const hasGuestRequest = transitionActivities.some((entry) => entry.action === "REQUEST_CREATED");
+          if (hasFoodReady) playChime(880, 0.32);
+          else if (hasGuestRequest) playChime(660, 0.3);
+          setToast(transitionActivities[0].message);
+        }
 
         const categories = payload.categories ?? [];
         const categoryMap = new Map(categories.map((category) => [category.id, category]));
@@ -252,15 +397,29 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
           restaurant: payload.restaurant,
           branch,
           health: payload.health,
+          waiterMetrics: payload.waiterMetrics ?? emptyWaiterMetrics,
         });
+        setServeConfirmOrder((current) => {
+          if (!current) return null;
+          return orders.find((order) => order.id === current.id && order.status === "READY") ?? null;
+        });
+        setAssignments(
+          Object.fromEntries(
+            (payload.assignments ?? []).map((assignment) => [assignment.entityId, assignment]),
+          ),
+        );
 
-        setActivityLogs((payload.audit ?? []).map((entry) => ({
-          id: `audit-${entry.id}`,
-          time: formatTime(entry.created_at),
-          type: "system",
-          icon: "⚡",
-          message: `${entry.action.replaceAll("_", " ")}`,
-        })));
+        const auditActivities = (payload.audit ?? []).map((entry) =>
+          makeActivityLog({
+            id: `audit-${entry.id}`,
+            action: entry.action,
+            entityType: entry.entity_type,
+            entityId: entry.entity_id,
+            createdAt: entry.created_at,
+            data: entry.data,
+          }),
+        );
+        setActivityLogs((current) => mergeActivityLogs(transitionActivities, current, auditActivities));
         setError(null);
         setConnection(payload.health.connection === "healthy" ? "connected" : "reconnecting");
       } catch (problem) {
@@ -275,6 +434,31 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
 
   useEffect(() => {
     queueMicrotask(() => void loadData());
+  }, [loadData]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.EventSource === "undefined") return;
+    const stream = new EventSource("/api/v1/operations/stream");
+
+    const markConnected = () => setConnection("connected");
+    const refreshFromRealtime = () => {
+      setConnection("connected");
+      if (realtimeRefreshTimer.current) clearTimeout(realtimeRefreshTimer.current);
+      realtimeRefreshTimer.current = setTimeout(() => void loadData(true), 120);
+    };
+
+    stream.addEventListener("connected", markConnected);
+    stream.addEventListener("keepalive", markConnected);
+    stream.addEventListener("invalidation", refreshFromRealtime);
+    stream.onerror = () => setConnection("reconnecting");
+
+    return () => {
+      stream.removeEventListener("connected", markConnected);
+      stream.removeEventListener("keepalive", markConnected);
+      stream.removeEventListener("invalidation", refreshFromRealtime);
+      stream.close();
+      if (realtimeRefreshTimer.current) clearTimeout(realtimeRefreshTimer.current);
+    };
   }, [loadData]);
 
   useEffect(() => {
@@ -353,47 +537,115 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
   }
 
   /* ─── Advance Order Status ─── */
-  async function advanceOrder(order: RestaurantOrder) {
+  async function advanceOrder(order: RestaurantOrder): Promise<boolean> {
     const sequence: OrderStatus[] = ["PLACED", "ACCEPTED", "PREPARING", "READY", "SERVED", "BILLED"];
     const currIndex = sequence.indexOf(order.status);
     const next = sequence[currIndex + 1];
-    if (!next) return;
+    if (!next) return false;
 
-    await mutate(async () => {
-      try {
-        await apiRequest(`/api/v1/orders/${order.id}/status`, {
-          method: "PATCH",
-          body: JSON.stringify({ status: next }),
-        });
-        return { error: null };
-      } catch (problem) {
-        return { error: { message: problem instanceof Error ? problem.message : "The order could not be updated." } };
+    setPendingActionId(order.id);
+    try {
+      const succeeded = await mutate(async () => {
+        try {
+          await apiRequest(`/api/v1/orders/${order.id}/status`, {
+            method: "PATCH",
+            body: JSON.stringify({ status: next }),
+          });
+          return { error: null };
+        } catch (problem) {
+          return { error: { message: problem instanceof Error ? problem.message : "The order could not be updated." } };
+        }
+      }, `Order #AT-${order.order_number} is now ${statusLabel(next).toLowerCase()}.`);
+
+      if (succeeded && (next === "READY" || next === "SERVED")) {
+        const action = next === "READY" ? "ORDER_READY" : "FOOD_SERVED";
+        appendActivities([
+          makeActivityLog({
+            id: `local-${action.toLowerCase()}-${order.id}`,
+            action,
+            entityType: "order",
+            entityId: order.id,
+            createdAt: new Date().toISOString(),
+            message: next === "READY"
+              ? `Food ready · Table ${tableNumber(order)} · Order #AT-${order.order_number}`
+              : `Serve completed · Table ${tableNumber(order)} · Order #AT-${order.order_number}`,
+          }),
+        ]);
       }
-    }, `Order #AT-${order.order_number} is now ${statusLabel(next).toLowerCase()}.`);
+      return succeeded;
+    } finally {
+      setPendingActionId(null);
+    }
   }
 
   /* ─── Resolve Service Request ─── */
-  async function resolveRequest(req: ServiceRequest) {
-    await mutate(async () => {
-      try {
-        await apiRequest(`/api/v1/service-requests/${req.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ status: "RESOLVED" }),
-        });
-        return { error: null };
-      } catch (problem) {
-        return { error: { message: problem instanceof Error ? problem.message : "The request could not be resolved." } };
+  async function resolveRequest(req: ServiceRequest): Promise<boolean> {
+    setPendingActionId(req.id);
+    try {
+      const succeeded = await mutate(async () => {
+        try {
+          await apiRequest(`/api/v1/service-requests/${req.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ status: "RESOLVED" }),
+          });
+          return { error: null };
+        } catch (problem) {
+          return { error: { message: problem instanceof Error ? problem.message : "The request could not be resolved." } };
+        }
+      }, `${requestTypeLabel(req.request_type)} for Table ${req.table_session?.table?.number ?? "—"} resolved.`);
+
+      if (succeeded) {
+        appendActivities([
+          makeActivityLog({
+            id: `local-request-resolved-${req.id}`,
+            action: "REQUEST_RESOLVED",
+            entityType: "service_request",
+            entityId: req.id,
+            createdAt: new Date().toISOString(),
+            message: `Resolve completed · ${requestTypeLabel(req.request_type)} · Table ${req.table_session?.table?.number ?? "—"}`,
+          }),
+        ]);
       }
-    }, `${req.request_type.toLowerCase()} request for Table ${req.table_session?.table?.number ?? ""} resolved.`);
+      return succeeded;
+    } finally {
+      setPendingActionId(null);
+    }
   }
 
   /* ─── Toggle Waiter Assignment ─── */
-  function toggleAssign(id: string) {
-    setAssignments((prev) => ({
-      ...prev,
-      [id]: prev[id] ? "" : staff.fullName,
-    }));
-    setToast(`Assignment updated to ${assignments[id] ? "Unassigned" : staff.fullName}`);
+  async function toggleAssign(id: string, entityType: "order" | "service_request"): Promise<boolean> {
+    const assigned = !assignments[id];
+    setPendingActionId(id);
+    try {
+      const succeeded = await mutate(async () => {
+        try {
+          await apiRequest(`/api/v1/waiter-tasks/${id}/assignment`, {
+            method: "PATCH",
+            body: JSON.stringify({ entityType, assigned }),
+          });
+          return { error: null };
+        } catch (problem) {
+          return { error: { message: problem instanceof Error ? problem.message : "The waiter assignment could not be updated." } };
+        }
+      }, assigned ? `Task assigned to ${staff.fullName}.` : "Task assignment released.");
+
+      if (succeeded) {
+        appendActivities([
+          makeActivityLog({
+            id: `local-waiter-${assigned ? "assigned" : "unassigned"}-${id}`,
+            action: assigned ? "WAITER_ASSIGNED" : "WAITER_UNASSIGNED",
+            entityType,
+            entityId: id,
+            createdAt: new Date().toISOString(),
+            data: { assignedStaffName: assigned ? staff.fullName : null },
+            message: assigned ? `Waiter assigned · ${staff.fullName}` : "Waiter assignment released",
+          }),
+        ]);
+      }
+      return succeeded;
+    } finally {
+      setPendingActionId(null);
+    }
   }
 
   /* ─── Sign Out ─── */
@@ -414,6 +666,12 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
   const selectedTableRequests = useMemo(
     () => (selectedTable ? data.requests.filter((r) => r.table_session?.table?.id === selectedTable.id) : []),
     [data.requests, selectedTable],
+  );
+  const serveConfirmAssignment = serveConfirmOrder ? assignments[serveConfirmOrder.id] : undefined;
+  const serveConfirmLocked = Boolean(
+    serveConfirmAssignment &&
+    serveConfirmAssignment.assignedStaffId !== staff.id &&
+    staff.roleName === "WAITER",
   );
 
   return (
@@ -509,8 +767,8 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
               aria-label="Open notifications"
             >
               <BellRing size={19} />
-              {openRequests.length + activeOrders.length > 0 && (
-                <i>{openRequests.length + activeOrders.length}</i>
+              {openRequests.length + data.orders.filter((order) => order.status === "READY").length > 0 && (
+                <i>{openRequests.length + data.orders.filter((order) => order.status === "READY").length}</i>
               )}
             </button>
 
@@ -529,7 +787,7 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
         {connection === "offline" && (
           <div className="admin-offline-banner">
             <AlertTriangle size={18} />
-            <span>Connection lost. Polling backend every 30 seconds…</span>
+            <span>Realtime stream unavailable. Secure polling fallback remains active.</span>
             <button onClick={() => void loadData(true)}>
               <RefreshCw size={14} /> Retry Now
             </button>
@@ -551,10 +809,14 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
           )}
 
           {loading ? (
-            <div className="admin-loading">
-              <LoaderCircle className="spin" size={32} />
-              <strong>Loading ROS Control Center…</strong>
-            </div>
+            section === "Waiter" ? (
+              <WaiterWorkspaceSkeleton />
+            ) : (
+              <div className="admin-loading">
+                <LoaderCircle className="spin" size={32} />
+                <strong>Loading ROS Control Center…</strong>
+              </div>
+            )
           ) : (
             <>
               {section === "Dashboard" && (
@@ -609,11 +871,16 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
                   requests={data.requests}
                   search={search}
                   nowTime={nowTime}
-                  staffName={staff.fullName}
+                  staffId={staff.id}
+                  staffRole={staff.roleName}
+                  connection={connection}
+                  activityLogs={activityLogs}
+                  metrics={data.waiterMetrics}
                   assignments={assignments}
                   toggleAssign={toggleAssign}
                   onServePrompt={(order) => setServeConfirmOrder(order)}
                   resolveRequest={resolveRequest}
+                  pendingActionId={pendingActionId}
                 />
               )}
 
@@ -635,36 +902,65 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
 
       {/* Serve Food Confirmation Modal */}
       {serveConfirmOrder && (
-        <div className="admin-modal-backdrop" onClick={() => setServeConfirmOrder(null)}>
-          <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Serve Food Confirmation</h3>
-            <p>
-              Are you sure you want to mark Order <strong>#AT-{serveConfirmOrder.order_number}</strong> for{" "}
-              <strong>Table {tableNumber(serveConfirmOrder)}</strong> as SERVED?
-            </p>
+        <div
+          className="admin-modal-backdrop"
+          onClick={() => {
+            if (pendingActionId !== serveConfirmOrder.id) setServeConfirmOrder(null);
+          }}
+        >
+          <div
+            className="admin-modal waiter-confirmation-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="serve-food-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span className="waiter-status-badge waiter-status-badge--ready">Ready for handoff</span>
+            <h3 id="serve-food-title">Serve Food?</h3>
+            <p>Confirm the complete order has reached the guest before closing the kitchen handoff.</p>
+
+            <div className="waiter-ready-meta">
+              <strong>Table {tableNumber(serveConfirmOrder)}</strong>
+              <span>Order #AT-{serveConfirmOrder.order_number}</span>
+            </div>
+            {serveConfirmAssignment && (
+              <p className="waiter-status-badge waiter-status-badge--assigned">
+                Assigned to {serveConfirmAssignment.assignedStaffName}
+              </p>
+            )}
 
             <div className="modal-items-list">
               {serveConfirmOrder.order_items?.map((item) => (
                 <div key={item.id}>
-                  <span>{item.quantity}× {item.item_name}</span>
-                  <strong>{formatCurrency(item.line_total)}</strong>
+                  <span>{item.item_name}</span>
+                  <strong>×{item.quantity}</strong>
                 </div>
               ))}
             </div>
 
             <div className="modal-actions">
-              <button className="secondary" onClick={() => setServeConfirmOrder(null)}>
+              <button
+                className="secondary"
+                disabled={pendingActionId === serveConfirmOrder.id}
+                onClick={() => setServeConfirmOrder(null)}
+              >
                 Cancel
               </button>
               <button
                 className="primary"
+                disabled={pendingActionId === serveConfirmOrder.id || serveConfirmLocked}
                 onClick={() => {
                   const target = serveConfirmOrder;
-                  setServeConfirmOrder(null);
-                  void advanceOrder(target);
+                  void advanceOrder(target).then((succeeded) => {
+                    if (succeeded) setServeConfirmOrder(null);
+                  });
                 }}
               >
-                Confirm Served ✓
+                {serveConfirmLocked
+                  ? `Assigned to ${serveConfirmAssignment?.assignedStaffName}`
+                  : pendingActionId === serveConfirmOrder.id
+                    ? "Confirming…"
+                    : "Confirm Served"}
               </button>
             </div>
           </div>
@@ -681,13 +977,19 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
             </button>
           </header>
           <div className="admin-notif-tabs">
-            {["all", "orders", "kitchen", "requests"].map((t) => (
+            {[
+              ["all", "All"],
+              ["kitchen", "Food Ready"],
+              ["request", "Requests"],
+              ["waiter", "Waiter"],
+              ["order", "Orders"],
+            ].map(([value, label]) => (
               <button
-                key={t}
-                className={notifFilter === t ? "active" : ""}
-                onClick={() => setNotifFilter(t)}
+                key={value}
+                className={notifFilter === value ? "active" : ""}
+                onClick={() => setNotifFilter(value)}
               >
-                {t.toUpperCase()}
+                {label.toUpperCase()}
               </button>
             ))}
           </div>
@@ -714,6 +1016,8 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
           table={selectedTable}
           orders={selectedTableOrders}
           requests={selectedTableRequests}
+          assignments={assignments}
+          activityLogs={activityLogs}
           onClose={() => setSelectedTableId(null)}
         />
       )}
@@ -1039,7 +1343,7 @@ function OrdersWorkspace({
 }: {
   orders: RestaurantOrder[];
   search: string;
-  advance: (o: RestaurantOrder) => Promise<void>;
+  advance: (o: RestaurantOrder) => Promise<boolean>;
 }) {
   const filtered = useMemo(() => {
     if (!search) return orders;
@@ -1084,7 +1388,7 @@ function OrdersWorkspace({
             <div className="order-feed-card__footer">
               <small>{relativeTime(o.placed_at)}</small>
               <strong>{formatCurrency(o.total)}</strong>
-              {["PLACED", "ACCEPTED", "PREPARING", "READY"].includes(o.status) && (
+              {["PLACED", "ACCEPTED", "PREPARING"].includes(o.status) && (
                 <button onClick={() => void advance(o)}>
                   Advance Status <ChevronRight size={15} />
                 </button>
@@ -1111,7 +1415,7 @@ function KitchenWorkspace({
   search: string;
   nowTime: number;
   kitchenTimes: { avg: number; longest: number };
-  advance: (o: RestaurantOrder) => Promise<void>;
+  advance: (o: RestaurantOrder) => Promise<boolean>;
 }) {
   const active = useMemo(
     () =>
@@ -1206,10 +1510,18 @@ function KitchenWorkspace({
                         </div>
                       )}
 
-                      <button onClick={() => void advance(o)}>
-                        {o.status === "PLACED" ? "Accept & Start Cooking" : o.status === "READY" ? "Mark Served" : "Mark Ready"}
-                        <ChevronRight size={15} />
-                      </button>
+                      {o.status === "READY" ? (
+                        <span className="waiter-status-badge waiter-status-badge--ready">Awaiting waiter</span>
+                      ) : (
+                        <button onClick={() => void advance(o)}>
+                          {o.status === "PLACED"
+                            ? "Accept Order"
+                            : o.status === "ACCEPTED"
+                              ? "Start Preparing"
+                              : "Mark Ready"}
+                          <ChevronRight size={15} />
+                        </button>
+                      )}
                     </article>
                   );
                 })}
@@ -1225,50 +1537,113 @@ function KitchenWorkspace({
 
 /* ─────────── 5. Waiter Workspace (Phase 4) ─────────── */
 
+function WaiterWorkspaceSkeleton() {
+  return (
+    <div className="waiter-workspace" aria-busy="true" aria-label="Loading waiter workspace">
+      <div className="waiter-workspace__header">
+        <div>
+          <span className="waiter-skeleton waiter-skeleton--meta" />
+          <span className="waiter-skeleton waiter-skeleton--title" />
+        </div>
+      </div>
+      <div className="waiter-skeleton-grid">
+        {Array.from({ length: 5 }, (_, index) => (
+          <div className="waiter-skeleton-card" key={index}>
+            <span className="waiter-skeleton waiter-skeleton--meta" />
+            <span className="waiter-skeleton waiter-skeleton--title" />
+            <span className="waiter-skeleton waiter-skeleton--line" />
+          </div>
+        ))}
+      </div>
+      <div className="waiter-ready-grid">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div className="waiter-skeleton-card" key={index}>
+            <span className="waiter-skeleton waiter-skeleton--title" />
+            <span className="waiter-skeleton waiter-skeleton--meta" />
+            <span className="waiter-skeleton waiter-skeleton--line" />
+            <span className="waiter-skeleton waiter-skeleton--line" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function WaiterWorkspace({
   orders,
   requests,
   search,
   nowTime,
-  staffName,
+  staffId,
+  staffRole,
+  connection,
+  activityLogs,
+  metrics,
   assignments,
   toggleAssign,
   onServePrompt,
   resolveRequest,
+  pendingActionId,
 }: {
   orders: RestaurantOrder[];
   requests: ServiceRequest[];
   search: string;
   nowTime: number;
-  staffName: string;
-  assignments: Record<string, string>;
-  toggleAssign: (id: string) => void;
+  staffId: string;
+  staffRole: string;
+  connection: ConnectionStatus;
+  activityLogs: ActivityLogItem[];
+  metrics: WaiterMetrics;
+  assignments: Record<string, WaiterAssignment>;
+  toggleAssign: (id: string, entityType: "order" | "service_request") => Promise<boolean>;
   onServePrompt: (o: RestaurantOrder) => void;
-  resolveRequest: (r: ServiceRequest) => Promise<void>;
+  resolveRequest: (r: ServiceRequest) => Promise<boolean>;
+  pendingActionId: string | null;
 }) {
   const [tab, setTab] = useState<"ready" | "requests" | "tasks" | "performance">("ready");
 
-  const readyOrders = useMemo(
-    () => orders.filter((o) => o.status === "READY" && orderMatches(o, search)),
-    [orders, search],
-  );
+  const readyActivityByOrder = useMemo(() => {
+    const timestamps = new Map<string, string>();
+    for (const entry of activityLogs) {
+      if (
+        entry.entityId &&
+        (entry.action === "ORDER_READY" || entry.action === "FOOD_READY") &&
+        !timestamps.has(entry.entityId)
+      ) {
+        timestamps.set(entry.entityId, entry.createdAt);
+      }
+    }
+    return timestamps;
+  }, [activityLogs]);
 
-  const openRequests = useMemo(
-    () =>
-      requests.filter(
+  const readyOrders = useMemo(() => {
+    return orders
+      .filter((order) => order.status === "READY" && orderMatches(order, search))
+      .sort((left, right) => {
+        const leftTime = readyTimestamp(left, readyActivityByOrder);
+        const rightTime = readyTimestamp(right, readyActivityByOrder);
+        return new Date(leftTime).getTime() - new Date(rightTime).getTime();
+      });
+  }, [orders, readyActivityByOrder, search]);
+
+  const openRequests = useMemo(() => {
+    return requests
+      .filter(
         (r) =>
           r.status !== "RESOLVED" &&
           `${r.request_type} ${r.table_session?.table?.number ?? ""}`.toLowerCase().includes(search.toLowerCase()),
-      ),
-    [requests, search],
-  );
+      )
+      .sort((left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime());
+  }, [requests, search]);
 
-  /* Unified Prioritized Live Task Queue */
   const taskQueue = useMemo(() => {
     type TaskItem = {
       id: string;
-      priority: number; // 1 = Food Ready, 2 = Bill, 3 = Waiter, 4 = Water, 5 = Tissue
+      entityId: string;
+      entityType: "order" | "service_request";
+      priority: number;
       priorityLabel: string;
+      kind: string;
       tableNumber: number | string;
       title: string;
       subtitle: string;
@@ -1282,177 +1657,391 @@ function WaiterWorkspace({
     readyOrders.forEach((o) => {
       list.push({
         id: `ready-${o.id}`,
+        entityId: o.id,
+        entityType: "order",
         priority: 1,
-        priorityLabel: "1️⃣ Food Ready",
+        priorityLabel: "Food ready",
+        kind: "food",
         tableNumber: tableNumber(o),
         title: `Order #AT-${o.order_number}`,
         subtitle: o.order_items?.map((i) => `${i.quantity}× ${i.item_name}`).join(", ") || "Items ready",
-        createdTime: new Date(o.placed_at).getTime(),
+        createdTime: new Date(readyTimestamp(o, readyActivityByOrder)).getTime(),
         onAction: () => onServePrompt(o),
         actionLabel: "Serve Food",
       });
     });
 
     openRequests.forEach((r) => {
-      const typePrio = r.request_type === "BILL" ? 2 : r.request_type === "WAITER" ? 3 : r.request_type === "WATER" ? 4 : 5;
-      const typeLabel = r.request_type === "BILL" ? "2️⃣ Bill Request" : r.request_type === "WAITER" ? "3️⃣ Waiter Call" : r.request_type === "WATER" ? "4️⃣ Water" : "5️⃣ Tissue";
+      const typePrio = requestTaskPriority(r.request_type);
 
       list.push({
         id: `req-${r.id}`,
+        entityId: r.id,
+        entityType: "service_request",
         priority: typePrio,
-        priorityLabel: typeLabel,
+        priorityLabel: requestTypeLabel(r.request_type),
+        kind: requestKind(r.request_type),
         tableNumber: r.table_session?.table?.number ?? "—",
-        title: `${r.request_type} Request`,
-        subtitle: `Requested ${relativeTime(r.created_at)}`,
+        title: requestTypeLabel(r.request_type),
+        subtitle: `Waiting ${formatElapsed(nowTime - new Date(r.created_at).getTime())}`,
         createdTime: new Date(r.created_at).getTime(),
         onAction: () => void resolveRequest(r),
         actionLabel: "Resolve",
       });
     });
 
-    // Sort by Priority ascending, then oldest time ascending
     return list.sort((a, b) => a.priority - b.priority || a.createdTime - b.createdTime);
-  }, [readyOrders, openRequests, onServePrompt, resolveRequest]);
+  }, [nowTime, onServePrompt, openRequests, readyActivityByOrder, readyOrders, resolveRequest]);
 
-  /* Waiter Performance Stats */
-  const servedToday = useMemo(() => orders.filter((o) => o.status === "SERVED" || o.served_at), [orders]);
+  const assignedTaskCount = Object.keys(assignments).length;
+  const averageFoodDeliveryMs = metrics.averageFoodDeliverySeconds > 0
+    ? metrics.averageFoodDeliverySeconds * 1000
+    : null;
+  const kpis = [
+    {
+      label: "Today's Deliveries",
+      value: String(metrics.todayDeliveries),
+      hint: "Orders served today",
+      icon: Utensils,
+      className: "waiter-kpi-card--ready",
+    },
+    {
+      label: "Average Delivery Time",
+      value: formatMetricDuration(averageFoodDeliveryMs),
+      hint: "Ready to served",
+      icon: Timer,
+      className: "",
+    },
+    {
+      label: "Pending Ready Orders",
+      value: String(metrics.pendingReadyOrders),
+      hint: metrics.pendingReadyOrders ? "Food needs collection" : "Kitchen handoff clear",
+      icon: ChefHat,
+      className: "waiter-kpi-card--ready",
+    },
+    {
+      label: "Pending Service Requests",
+      value: String(metrics.pendingServiceRequests),
+      hint: metrics.pendingServiceRequests ? "Guest action required" : "Guest requests clear",
+      icon: BellRing,
+      className: metrics.pendingServiceRequests ? "waiter-kpi-card--requests" : "",
+    },
+    {
+      label: "Active Waiter Tasks",
+      value: String(metrics.activeWaiterTasks),
+      hint: `${assignedTaskCount} currently assigned`,
+      icon: ClipboardList,
+      className: "waiter-kpi-card--active",
+    },
+  ];
+
+  const tabs = [
+    { id: "ready" as const, label: "Ready Orders", count: readyOrders.length },
+    { id: "requests" as const, label: "Service Requests", count: openRequests.length },
+    { id: "tasks" as const, label: "Live Tasks", count: taskQueue.length },
+    { id: "performance" as const, label: "Performance", count: metrics.completedTasks },
+  ];
 
   return (
-    <div>
-      <div className="view-intro">
+    <div className="waiter-workspace">
+      <div className="waiter-workspace__header">
         <div>
           <p className="eyebrow eyebrow--maroon"><span /> Waiter Workspace</p>
           <h2>Food ready queue & guest assistance</h2>
+          <p>Kitchen handoffs, guest requests, and the next highest-priority action in one live workspace.</p>
         </div>
+        <span className={`waiter-live-indicator waiter-live-indicator--${connection}`}>
+          {connection === "connected" ? "Live · 5s sync" : connection === "reconnecting" ? "Reconnecting" : "Offline"}
+        </span>
       </div>
 
-      {/* Waiter Workspace Tabs */}
-      <div className="waiter-tabs">
-        <button className={tab === "ready" ? "active" : ""} onClick={() => setTab("ready")}>
-          🍽 Ready Orders ({readyOrders.length})
-        </button>
-        <button className={tab === "requests" ? "active" : ""} onClick={() => setTab("requests")}>
-          🛎 Service Requests ({openRequests.length})
-        </button>
-        <button className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>
-          📋 Live Tasks ({taskQueue.length})
-        </button>
-        <button className={tab === "performance" ? "active" : ""} onClick={() => setTab("performance")}>
-          📊 Performance
-        </button>
+      <section aria-label="Waiter key performance indicators" className="waiter-kpi-grid" aria-live="polite">
+        {kpis.map(({ label, value, hint, icon: Icon, className }) => (
+          <article key={label} className={`waiter-kpi-card ${className}`}>
+            <div className="waiter-kpi-card__top">
+              <span className="waiter-kpi-card__label">{label}</span>
+              <span className="waiter-kpi-card__icon"><Icon size={17} /></span>
+            </div>
+            <strong className="waiter-kpi-card__value">{value}</strong>
+            <small className={`waiter-kpi-card__hint ${(metrics.pendingReadyOrders || metrics.pendingServiceRequests) && label.includes("Pending") ? "is-warning" : ""}`}>
+              {hint}
+            </small>
+          </article>
+        ))}
+      </section>
+
+      <div className="waiter-tabs" role="tablist" aria-label="Waiter workspace modules">
+        {tabs.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === item.id}
+            className={tab === item.id ? "active" : ""}
+            onClick={() => setTab(item.id)}
+          >
+            {item.label} ({item.count})
+          </button>
+        ))}
       </div>
 
-      {/* Tab 1: Ready Orders */}
       {tab === "ready" && (
-        <div className="waiter-feed">
+        <section className="waiter-section" role="tabpanel" aria-label="Food ready queue">
+          <header className="waiter-section__header">
+            <div>
+              <h3>Food Ready Queue</h3>
+              <p>Only kitchen-complete orders appear here, oldest handoff first.</p>
+            </div>
+            <span className="waiter-section__count">{readyOrders.length}</span>
+          </header>
+          <div className="waiter-ready-grid" aria-live="polite">
           {readyOrders.map((o) => {
-            const elapsedMins = Math.floor((nowTime - new Date(o.placed_at).getTime()) / 60000);
-            const elapsedSecs = Math.floor(((nowTime - new Date(o.placed_at).getTime()) % 60000) / 1000);
-            const assignedStaff = assignments[o.id];
+            const readyAt = readyTimestamp(o, readyActivityByOrder);
+            const elapsed = Math.max(0, nowTime - new Date(readyAt).getTime());
+            const priority = readyPriority(elapsed);
+            const assignment = assignments[o.id];
+            const assignedToCurrentStaff = assignment?.assignedStaffId === staffId;
+            const canOverrideAssignment = staffRole === "OWNER" || staffRole === "MANAGER";
+            const lockedByAnotherWaiter = Boolean(assignment && !assignedToCurrentStaff && !canOverrideAssignment);
+            const actionPending = pendingActionId === o.id;
 
             return (
-              <article key={o.id} className="waiter-food-card">
+              <article
+                key={o.id}
+                className={`waiter-food-card ${priority === "high" ? "waiter-food-card--urgent" : ""}`}
+                data-priority={priority}
+              >
                 <div className="waiter-food-card__head">
                   <div>
-                    <strong>🍽 Table {tableNumber(o)}</strong>
+                    <strong className="waiter-food-card__table">Table {tableNumber(o)}</strong>
                     <small>Order #AT-{o.order_number}</small>
                   </div>
-                  <span className="ticket-timer">Ready {elapsedMins}m {elapsedSecs}s</span>
+                  <span className="waiter-ready-time">{formatElapsed(elapsed)}</span>
+                </div>
+
+                <div className="waiter-ready-meta">
+                  <span><Clock size={13} /> Ready since {formatTime(readyAt)}</span>
+                  <span className={`waiter-priority-badge waiter-priority-badge--${priority}`}>
+                    {priority === "high" ? "High priority" : priority === "medium" ? "Medium priority" : "Normal priority"}
+                  </span>
                 </div>
 
                 <div className="waiter-food-card__items">
                   {o.order_items?.map((item) => (
-                    <div key={item.id}>
-                      <span>{item.quantity}× {item.item_name}</span>
+                    <div key={item.id} className="waiter-food-item">
+                      <span>{item.item_name}</span>
+                      <strong className="waiter-food-item__quantity">×{item.quantity}</strong>
                     </div>
                   ))}
                 </div>
 
                 <div className="waiter-food-card__actions">
-                  <button className="assign-btn" onClick={() => toggleAssign(o.id)}>
-                    {assignedStaff ? `Serving: ${assignedStaff}` : "Assign to Me"}
+                  <button
+                    type="button"
+                    className="waiter-action waiter-action--secondary"
+                    disabled={actionPending || lockedByAnotherWaiter}
+                    onClick={() => void toggleAssign(o.id, "order")}
+                  >
+                    {actionPending
+                      ? "Updating…"
+                      : assignedToCurrentStaff
+                        ? "Release task"
+                        : assignment
+                          ? canOverrideAssignment
+                            ? `Release: ${assignment.assignedStaffName}`
+                            : `Assigned: ${assignment.assignedStaffName}`
+                          : "Assign to me"}
                   </button>
-                  <button className="serve-btn" onClick={() => onServePrompt(o)}>
-                    Serve Food →
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-          {!readyOrders.length && <div className="admin-empty">No food currently ready to be served.</div>}
-        </div>
-      )}
-
-      {/* Tab 2: Service Requests */}
-      {tab === "requests" && (
-        <div className="waiter-feed">
-          {openRequests.map((req) => {
-            const assignedStaff = assignments[req.id];
-            return (
-              <article key={req.id} className="waiter-request-card">
-                <div className="waiter-request-card__head">
-                  <strong>Table {req.table_session?.table?.number ?? "—"}</strong>
-                  <span className="req-type-pill">{req.request_type} Request</span>
-                </div>
-                <small>Requested {relativeTime(req.created_at)}</small>
-                <div className="waiter-food-card__actions">
-                  <button className="assign-btn" onClick={() => toggleAssign(req.id)}>
-                    {assignedStaff ? `Assigned: ${assignedStaff}` : "Assign"}
-                  </button>
-                  <button className="serve-btn" onClick={() => void resolveRequest(req)}>
-                    Resolve Request
+                  <button
+                    type="button"
+                    className="waiter-action waiter-action--primary"
+                    disabled={actionPending || lockedByAnotherWaiter}
+                    onClick={() => onServePrompt(o)}
+                    title={lockedByAnotherWaiter ? `Assigned to ${assignment?.assignedStaffName}` : undefined}
+                  >
+                    Serve Food <ChevronRight size={15} />
                   </button>
                 </div>
               </article>
             );
           })}
-          {!openRequests.length && <div className="admin-empty">All service requests resolved!</div>}
-        </div>
-      )}
-
-      {/* Tab 3: Unified Prioritized Task Queue */}
-      {tab === "tasks" && (
-        <div className="waiter-feed">
-          {taskQueue.map((task) => (
-            <article key={task.id} className="waiter-task-card">
-              <span className="priority-badge">{task.priorityLabel}</span>
+          {!readyOrders.length && (
+            <div className="waiter-empty">
               <div>
-                <strong>Table {task.tableNumber} — {task.title}</strong>
-                <p>{task.subtitle}</p>
+                <CheckCircle2 className="waiter-empty__icon" size={28} />
+                <h3>Kitchen handoff is clear</h3>
+                <p>New READY orders will appear here automatically.</p>
               </div>
-              <button className="serve-btn" onClick={task.onAction}>
-                {task.actionLabel}
-              </button>
-            </article>
-          ))}
-          {!taskQueue.length && <div className="admin-empty">All tasks completed!</div>}
-        </div>
+            </div>
+          )}
+          </div>
+        </section>
       )}
 
-      {/* Tab 4: Performance */}
+      {tab === "requests" && (
+        <section className="waiter-section" role="tabpanel" aria-label="Guest service requests">
+          <header className="waiter-section__header">
+            <div>
+              <h3>Guest Service Requests</h3>
+              <p>Bill, waiter, water, tissue, and cutlery requests in one queue.</p>
+            </div>
+            <span className="waiter-section__count">{openRequests.length}</span>
+          </header>
+          <div className="waiter-request-grid" aria-live="polite">
+          {openRequests.map((req) => {
+            const assignment = assignments[req.id];
+            const assignedToCurrentStaff = assignment?.assignedStaffId === staffId;
+            const canOverrideAssignment = staffRole === "OWNER" || staffRole === "MANAGER";
+            const lockedByAnotherWaiter = Boolean(assignment && !assignedToCurrentStaff && !canOverrideAssignment);
+            const actionPending = pendingActionId === req.id;
+            const requestAge = Math.max(0, nowTime - new Date(req.created_at).getTime());
+            return (
+              <article
+                key={req.id}
+                className={`waiter-request-card waiter-request-card--${requestKind(req.request_type)}`}
+                data-request-type={req.request_type}
+              >
+                <div className="waiter-request-card__head">
+                  <strong className="waiter-request-card__table">Table {req.table_session?.table?.number ?? "—"}</strong>
+                  <span className={`waiter-request-type waiter-request-type--${requestKind(req.request_type)}`}>
+                    {requestTypeLabel(req.request_type)}
+                  </span>
+                </div>
+
+                <span className="waiter-request-card__time">
+                  Requested {formatTime(req.created_at)} · waiting {formatElapsed(requestAge)}
+                </span>
+
+                <div className="waiter-ready-meta">
+                  <span className={`waiter-priority-badge waiter-priority-badge--${requestPriorityLevel(req, requestAge)}`}>
+                    {requestPriorityLabel(req, requestAge)}
+                  </span>
+                  {req.status === "ACKNOWLEDGED" && <span className="waiter-status-badge waiter-status-badge--serving">Acknowledged</span>}
+                </div>
+
+                <div className="waiter-food-card__actions">
+                  <button
+                    type="button"
+                    className="waiter-action waiter-action--secondary"
+                    disabled={actionPending || lockedByAnotherWaiter}
+                    onClick={() => void toggleAssign(req.id, "service_request")}
+                  >
+                    {actionPending
+                      ? "Updating…"
+                      : assignedToCurrentStaff
+                        ? "Release task"
+                        : assignment
+                          ? canOverrideAssignment
+                            ? `Release: ${assignment.assignedStaffName}`
+                            : `Assigned: ${assignment.assignedStaffName}`
+                          : "Assign to me"}
+                  </button>
+                  <button
+                    type="button"
+                    className="waiter-action waiter-action--primary"
+                    disabled={actionPending || lockedByAnotherWaiter}
+                    onClick={() => void resolveRequest(req)}
+                    title={lockedByAnotherWaiter ? `Assigned to ${assignment?.assignedStaffName}` : undefined}
+                  >
+                    {actionPending ? "Resolving…" : "Resolve"}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+          {!openRequests.length && (
+            <div className="waiter-empty">
+              <div>
+                <CheckCircle2 className="waiter-empty__icon" size={28} />
+                <h3>All guests assisted</h3>
+                <p>New guest requests will enter this queue automatically.</p>
+              </div>
+            </div>
+          )}
+          </div>
+        </section>
+      )}
+
+      {tab === "tasks" && (
+        <section className="waiter-section" role="tabpanel" aria-label="Prioritized waiter tasks">
+          <header className="waiter-section__header">
+            <div>
+              <h3>Live Task Queue</h3>
+              <p>Food ready, bill, waiter, water, then tissue; oldest first within each priority.</p>
+            </div>
+            <span className="waiter-section__count">{taskQueue.length}</span>
+          </header>
+          <div className="waiter-task-queue" aria-live="polite">
+          {taskQueue.map((task) => {
+            const assignment = assignments[task.entityId];
+            const assignedToCurrentStaff = assignment?.assignedStaffId === staffId;
+            const canOverrideAssignment = staffRole === "OWNER" || staffRole === "MANAGER";
+            const lockedByAnotherWaiter = Boolean(assignment && !assignedToCurrentStaff && !canOverrideAssignment);
+            return (
+              <article
+                key={task.id}
+                className={`waiter-task-card waiter-task-card--${task.kind}`}
+                data-priority={task.priority}
+              >
+                <span className="waiter-priority-badge">{task.priority}. {task.priorityLabel}</span>
+                <div>
+                  <strong className="waiter-task-card__title">Table {task.tableNumber} · {task.title}</strong>
+                  <p className="waiter-task-card__detail">
+                    {task.subtitle}
+                    {assignment ? ` · Assigned to ${assignment.assignedStaffName}` : ""}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="waiter-action waiter-action--primary"
+                  disabled={pendingActionId === task.entityId || lockedByAnotherWaiter}
+                  onClick={task.onAction}
+                  title={lockedByAnotherWaiter ? `Assigned to ${assignment?.assignedStaffName}` : undefined}
+                >
+                  {task.actionLabel}
+                </button>
+              </article>
+            );
+          })}
+          {!taskQueue.length && (
+            <div className="waiter-empty">
+              <div>
+                <CheckCircle2 className="waiter-empty__icon" size={28} />
+                <h3>Operational queue clear</h3>
+                <p>No READY orders or unresolved guest requests.</p>
+              </div>
+            </div>
+          )}
+          </div>
+        </section>
+      )}
+
       {tab === "performance" && (
-        <div className="waiter-performance-grid">
-          <article className="perf-card">
-            <span>Deliveries Today</span>
-            <strong>{servedToday.length}</strong>
-            <small>Orders served</small>
-          </article>
-          <article className="perf-card">
-            <span>Avg Food Delivery</span>
-            <strong>1m 40s</strong>
-            <small>From Ready to Served</small>
-          </article>
-          <article className="perf-card">
-            <span>Avg Water Response</span>
-            <strong>35s</strong>
-            <small>Response time</small>
-          </article>
-          <article className="perf-card">
-            <span>Avg Bill Response</span>
-            <strong>52s</strong>
-            <small>Response time</small>
-          </article>
-        </div>
+        <section className="waiter-section" role="tabpanel" aria-label="Waiter performance">
+          <header className="waiter-section__header">
+            <div>
+              <h3>Waiter Performance</h3>
+              <p>Today&apos;s response and completion metrics, calculated from recorded timestamps.</p>
+            </div>
+          </header>
+          <div className="waiter-performance-grid">
+            {[
+              ["Deliveries Today", String(metrics.todayDeliveries), "Orders served"],
+              ["Avg Food Delivery", formatMetricDuration(averageFoodDeliveryMs), "Ready to served"],
+              ["Avg Water Response", formatMetricDuration(metrics.averageWaterResponseSeconds > 0 ? metrics.averageWaterResponseSeconds * 1000 : null), "Created to resolved"],
+              ["Avg Bill Response", formatMetricDuration(metrics.averageBillResponseSeconds > 0 ? metrics.averageBillResponseSeconds * 1000 : null), "Created to resolved"],
+              ["Avg Waiter Response", formatMetricDuration(metrics.averageWaiterResponseSeconds > 0 ? metrics.averageWaiterResponseSeconds * 1000 : null), "Created to resolved"],
+              ["Pending Tasks", String(metrics.pendingTasks), "Current operational queue"],
+              ["Completed Tasks", String(metrics.completedTasks), "Served and resolved today"],
+            ].map(([label, value, hint]) => (
+              <article className="waiter-performance-card" key={label}>
+                <span className="waiter-performance-card__label">{label}</span>
+                <strong className="waiter-performance-card__value">{value}</strong>
+                <small className="waiter-performance-card__hint">{hint}</small>
+              </article>
+            ))}
+          </div>
+        </section>
       )}
     </div>
   );
@@ -1624,13 +2213,58 @@ function TableDetailsDrawer({
   table,
   orders,
   requests,
+  assignments,
+  activityLogs,
   onClose,
 }: {
   table: DiningTable;
   orders: RestaurantOrder[];
   requests: ServiceRequest[];
+  assignments: Record<string, WaiterAssignment>;
+  activityLogs: ActivityLogItem[];
   onClose: () => void;
 }) {
+  const openTableRequests = requests.filter((request) => request.status !== "RESOLVED");
+  const activeTableOrders = orders.filter((order) => !["PAID", "CANCELLED"].includes(order.status));
+  const currentSessionId = activeTableOrders[0]?.table_session_id
+    ?? openTableRequests[0]?.table_session_id
+    ?? orders[0]?.table_session_id;
+  const timelineOrders = currentSessionId ? orders.filter((order) => order.table_session_id === currentSessionId) : [];
+  const timelineRequests = currentSessionId ? requests.filter((request) => request.table_session_id === currentSessionId) : [];
+  const assignedNames = Array.from(
+    new Set(
+      [
+        ...activeTableOrders.map((order) => assignments[order.id]?.assignedStaffName),
+        ...openTableRequests.map((request) => assignments[request.id]?.assignedStaffName),
+      ]
+        .filter((name): name is string => Boolean(name)),
+    ),
+  );
+  const hasReadyFood = activeTableOrders.some((order) => order.status === "READY");
+  const hasServedFood = activeTableOrders.some((order) => ["SERVED", "BILLED"].includes(order.status));
+  const hasKitchenWork = activeTableOrders.some((order) => ["ACCEPTED", "PREPARING"].includes(order.status));
+  const hasPlacedOrder = activeTableOrders.some((order) => order.status === "PLACED");
+  const waiterStatus = assignedNames.length
+    ? `Serving · ${assignedNames.join(", ")}`
+    : hasReadyFood
+      ? "Food ready"
+      : openTableRequests.length
+        ? "Guest assistance"
+        : hasServedFood
+          ? "Served"
+          : "Standby";
+  const kitchenStatus = hasReadyFood
+    ? "Ready"
+    : hasKitchenWork
+      ? "Preparing"
+      : hasPlacedOrder
+        ? "New order"
+        : hasServedFood
+          ? "Completed"
+          : "No active order";
+  const foodStatus = hasReadyFood ? "Food ready" : hasServedFood ? "Served · Dining" : hasKitchenWork || hasPlacedOrder ? "In kitchen" : "Not ordered";
+  const timeline = buildTableTimeline(timelineOrders, timelineRequests, activityLogs);
+
   return (
     <div className="admin-drawer-backdrop" onClick={onClose}>
       <div className="admin-table-drawer" onClick={(e) => e.stopPropagation()}>
@@ -1645,33 +2279,31 @@ function TableDetailsDrawer({
         </header>
 
         <div className="drawer-body">
-          {/* Service Timeline Progression */}
           <section className="drawer-section">
-            <h3>Service Timeline</h3>
-            <div className="drawer-timeline-flow">
-              <div className="flow-step done">
-                <span>Kitchen</span>
-                <strong>✓ Ready</strong>
+            <h3>Waiter & Kitchen Status</h3>
+            <div className="waiter-drawer-status">
+              <div className="waiter-drawer-status__item">
+                <span>Waiter Status</span>
+                <strong>{waiterStatus}</strong>
               </div>
-              <div className="flow-step done">
-                <span>Waiter</span>
-                <strong>✓ Assigned</strong>
+              <div className="waiter-drawer-status__item">
+                <span>Kitchen Status</span>
+                <strong>{kitchenStatus}</strong>
               </div>
-              <div className="flow-step done">
-                <span>Food</span>
-                <strong>✓ Served</strong>
+              <div className="waiter-drawer-status__item">
+                <span>Food Status</span>
+                <strong>{foodStatus}</strong>
               </div>
-              <div className="flow-step done">
-                <span>Customer</span>
-                <strong>Dining</strong>
+              <div className="waiter-drawer-status__item">
+                <span>Outstanding Requests</span>
+                <strong>{openTableRequests.length}</strong>
               </div>
             </div>
           </section>
 
-          {/* Active Orders */}
           <section className="drawer-section">
             <h3>Active Orders</h3>
-            {orders.map((o) => (
+            {activeTableOrders.map((o) => (
               <div key={o.id} className="drawer-order-item">
                 <div className="drawer-order-item__head">
                   <strong>Order #AT-{o.order_number}</strong>
@@ -1685,19 +2317,35 @@ function TableDetailsDrawer({
                 ))}
               </div>
             ))}
-            {!orders.length && <div className="admin-empty">No active orders for this table.</div>}
+            {!activeTableOrders.length && <div className="admin-empty">No active orders for this table.</div>}
           </section>
 
-          {/* Service Requests */}
           <section className="drawer-section">
-            <h3>Service Requests</h3>
-            {requests.map((r) => (
+            <h3>Outstanding Requests</h3>
+            {openTableRequests.map((r) => (
               <div key={r.id} className="drawer-request-item">
-                <span>{r.request_type}</span>
-                <small>{r.status}</small>
+                <span>{requestTypeLabel(r.request_type)}</span>
+                <small>{r.status} · {relativeTime(r.created_at)}</small>
               </div>
             ))}
-            {!requests.length && <div className="admin-empty">No service requests.</div>}
+            {!openTableRequests.length && <div className="admin-empty">No outstanding service requests.</div>}
+          </section>
+
+          <section className="drawer-section">
+            <h3>Service Timeline</h3>
+            <div className="waiter-timeline">
+              {timeline.map((item) => (
+                <div className="waiter-timeline__item" key={item.id}>
+                  <span className="waiter-timeline__time">{formatTime(item.at)}</span>
+                  <span className="waiter-timeline__marker" />
+                  <div className="waiter-timeline__content">
+                    <strong>{item.label}</strong>
+                    <small>{item.detail}</small>
+                  </div>
+                </div>
+              ))}
+              {!timeline.length && <div className="admin-empty">Service activity will appear after the first order or request.</div>}
+            </div>
           </section>
         </div>
       </div>
@@ -1730,28 +2378,216 @@ function formatTime(iso: string) {
   }
 }
 
+function orderTimestamp(order: RestaurantOrder, field: keyof Pick<OrderLifecycle, "accepted_at" | "preparing_at" | "ready_at" | "billed_at">) {
+  const value = (order as OrderLifecycle)[field];
+  return typeof value === "string" && value ? value : null;
+}
+
+function readyTimestamp(order: RestaurantOrder, activityByOrder: Map<string, string> = new Map()) {
+  return orderTimestamp(order, "ready_at") ?? activityByOrder.get(order.id) ?? order.placed_at;
+}
+
+function formatMetricDuration(milliseconds: number | null) {
+  if (milliseconds === null || !Number.isFinite(milliseconds)) return "—";
+  return formatElapsed(milliseconds);
+}
+
+function formatElapsed(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function readyPriority(milliseconds: number): "high" | "medium" | "normal" {
+  if (milliseconds >= 10 * 60_000) return "high";
+  if (milliseconds >= 4 * 60_000) return "medium";
+  return "normal";
+}
+
+function requestTaskPriority(type: ServiceRequest["request_type"]) {
+  if (type === "BILL") return 2;
+  if (type === "WAITER") return 3;
+  if (type === "WATER") return 4;
+  return 5;
+}
+
+function requestKind(type: ServiceRequest["request_type"]) {
+  if (type === "BILL") return "bill";
+  if (type === "WATER") return "water";
+  if (type === "TISSUE" || type === "SPOON") return "tissue";
+  return "waiter";
+}
+
+function requestTypeLabel(type: ServiceRequest["request_type"]) {
+  if (type === "BILL") return "Bill request";
+  if (type === "WAITER") return "Waiter call";
+  if (type === "WATER") return "Water requested";
+  if (type === "TISSUE") return "Tissue requested";
+  return "Cutlery requested";
+}
+
+function requestPriorityLevel(request: ServiceRequest, age: number): "high" | "medium" | "normal" {
+  if (request.priority >= 10 || age >= 8 * 60_000) return "high";
+  if (request.priority >= 5 || age >= 3 * 60_000) return "medium";
+  return "normal";
+}
+
+function requestPriorityLabel(request: ServiceRequest, age: number) {
+  const level = requestPriorityLevel(request, age);
+  return level === "high" ? "High priority" : level === "medium" ? "Medium priority" : "Normal priority";
+}
+
+function makeActivityLog({
+  id,
+  action,
+  entityType = null,
+  entityId = null,
+  createdAt,
+  data = {},
+  message,
+}: {
+  id: string;
+  action: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  createdAt: string;
+  data?: Record<string, unknown>;
+  message?: string;
+}): ActivityLogItem {
+  return {
+    id,
+    time: formatTime(createdAt),
+    type: auditType(action),
+    icon: auditIcon(action),
+    message: message ?? auditMessage(action, data),
+    action,
+    entityType,
+    entityId,
+    createdAt,
+    data,
+  };
+}
+
+function mergeActivityLogs(...groups: ActivityLogItem[][]) {
+  const unique = new Map<string, ActivityLogItem>();
+  for (const group of groups) {
+    for (const item of group) {
+      const status = typeof item.data.status === "string" ? item.data.status : "";
+      const key = item.entityId ? `${item.action}:${item.entityId}:${status}` : item.id;
+      if (!unique.has(key)) unique.set(key, item);
+    }
+  }
+  return [...unique.values()]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, 150);
+}
+
 function auditType(action: string): ActivityLogItem["type"] {
-  if (action.includes("ORDER") || action === "FOOD_SERVED" || action.includes("PAYMENT")) return "order";
   if (action.includes("REQUEST")) return "request";
+  if (action === "ORDER_READY" || action === "FOOD_READY" || action.includes("PREPAR")) return "kitchen";
+  if (action.includes("WAITER") || action === "FOOD_SERVED" || action === "DELIVERY_COMPLETED") return "waiter";
   if (action.includes("SESSION")) return "session";
-  if (action.includes("READY") || action.includes("PREPAR")) return "kitchen";
+  if (action.includes("ORDER") || action.includes("PAYMENT")) return "order";
   return "system";
 }
 
 function auditIcon(action: string) {
-  if (action === "ORDER_READY") return "🟢";
-  if (action === "FOOD_SERVED") return "✓";
-  if (action.includes("REQUEST")) return "🔔";
-  if (action.includes("LOGIN")) return "🔐";
-  if (action.includes("SETTINGS")) return "⚙️";
+  if (action === "ORDER_READY" || action === "FOOD_READY") return "●";
+  if (action === "FOOD_SERVED" || action === "DELIVERY_COMPLETED") return "✓";
+  if (action.includes("REQUEST")) return "!";
+  if (action.includes("WAITER")) return "W";
   if (action.includes("PAYMENT")) return "₹";
   return "•";
 }
 
-function auditMessage(action: string, metadata: Record<string, unknown>) {
+function auditMessage(action: string, data: Record<string, unknown>) {
+  const messages: Record<string, string> = {
+    ORDER_READY: "Food ready",
+    FOOD_READY: "Food ready",
+    FOOD_SERVED: "Serve completed",
+    DELIVERY_COMPLETED: "Delivery completed",
+    REQUEST_CREATED: "Guest request created",
+    REQUEST_RESOLVED: "Resolve completed",
+    REQUEST_ACKNOWLEDGED: "Guest request acknowledged",
+    WAITER_ASSIGNED: "Waiter assigned",
+    WAITER_UNASSIGNED: "Waiter assignment released",
+    WAITER_RESPONSE: "Waiter response recorded",
+  };
+  const status = typeof data.status === "string" ? ` · ${data.status.toLowerCase()}` : "";
+  if (messages[action]) return `${messages[action]}${status}`;
   const label = action.toLowerCase().replaceAll("_", " ");
-  const status = typeof metadata.status === "string" ? ` · ${metadata.status.toLowerCase()}` : "";
   return `${label.charAt(0).toUpperCase()}${label.slice(1)}${status}`;
+}
+
+function buildTableTimeline(
+  orders: RestaurantOrder[],
+  requests: ServiceRequest[],
+  activityLogs: ActivityLogItem[],
+) {
+  type TimelineItem = { id: string; at: string; label: string; detail: string };
+  const items: TimelineItem[] = [];
+
+  for (const order of orders) {
+    const orderLabel = `Order #AT-${order.order_number}`;
+    items.push({ id: `${order.id}-placed`, at: order.placed_at, label: "Order placed", detail: orderLabel });
+    const acceptedAt = orderTimestamp(order, "accepted_at");
+    const preparingAt = orderTimestamp(order, "preparing_at");
+    const readyAt = orderTimestamp(order, "ready_at")
+      ?? activityLogs.find((entry) => entry.entityId === order.id && entry.action === "ORDER_READY")?.createdAt;
+    const servedAt = order.served_at
+      ?? activityLogs.find((entry) => entry.entityId === order.id && entry.action === "FOOD_SERVED")?.createdAt;
+    if (acceptedAt) items.push({ id: `${order.id}-accepted`, at: acceptedAt, label: "Kitchen accepted", detail: orderLabel });
+    if (preparingAt) items.push({ id: `${order.id}-preparing`, at: preparingAt, label: "Kitchen preparing", detail: orderLabel });
+    if (readyAt) items.push({ id: `${order.id}-ready`, at: readyAt, label: "Food ready", detail: `${orderLabel} ready for waiter` });
+    if (servedAt) items.push({ id: `${order.id}-served`, at: servedAt, label: "Served · Dining", detail: `${orderLabel} delivered to table` });
+  }
+
+  for (const request of requests) {
+    items.push({
+      id: `${request.id}-created`,
+      at: request.created_at,
+      label: requestTypeLabel(request.request_type),
+      detail: "Guest request created",
+    });
+    if (request.acknowledged_at) {
+      items.push({
+        id: `${request.id}-acknowledged`,
+        at: request.acknowledged_at,
+        label: "Waiter responding",
+        detail: requestTypeLabel(request.request_type),
+      });
+    }
+    if (request.resolved_at) {
+      items.push({
+        id: `${request.id}-resolved`,
+        at: request.resolved_at,
+        label: "Request resolved",
+        detail: requestTypeLabel(request.request_type),
+      });
+    }
+  }
+
+  const tableEntityIds = new Set([...orders.map((order) => order.id), ...requests.map((request) => request.id)]);
+  for (const entry of activityLogs) {
+    if (!entry.entityId || !tableEntityIds.has(entry.entityId)) continue;
+    if (entry.action !== "WAITER_ASSIGNED" && entry.action !== "WAITER_UNASSIGNED") continue;
+    const staffName = typeof entry.data.assignedStaffName === "string" ? ` · ${entry.data.assignedStaffName}` : "";
+    items.push({
+      id: `timeline-${entry.id}`,
+      at: entry.createdAt,
+      label: entry.action === "WAITER_ASSIGNED" ? "Waiter assigned" : "Waiter released",
+      detail: `Operational task${staffName}`,
+    });
+  }
+
+  return items
+    .filter((item) => !Number.isNaN(new Date(item.at).getTime()))
+    .sort((left, right) => new Date(left.at).getTime() - new Date(right.at).getTime())
+    .slice(-24);
 }
 
 function formatLiveClock(timestamp: number) {

@@ -56,9 +56,9 @@ export async function getPublicRestaurantData(): Promise<PublicRestaurantData> {
 
   if (restaurantResult.error || categoryResult.error || itemResult.error) {
     console.error("Unable to load public restaurant data", {
-      restaurant: restaurantResult.error?.message,
-      categories: categoryResult.error?.message,
-      menu: itemResult.error?.message,
+      restaurant: restaurantResult.error?.code ?? null,
+      categories: categoryResult.error?.code ?? null,
+      menu: itemResult.error?.code ?? null,
     });
   }
 

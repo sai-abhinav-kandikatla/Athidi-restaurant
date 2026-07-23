@@ -1,6 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { getSupabasePublicConfig } from "./config";
+import { getSupabasePublicConfig, isProductionRuntime } from "./config";
 
 export async function getServerSupabase() {
   const config = getSupabasePublicConfig();
@@ -8,6 +8,12 @@ export async function getServerSupabase() {
 
   const cookieStore = await cookies();
   return createServerClient(config.url, config.anonKey, {
+    cookieOptions: {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      secure: isProductionRuntime(),
+    },
     cookies: {
       getAll() {
         return cookieStore.getAll();

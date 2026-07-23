@@ -2,6 +2,14 @@
 
 let csrfToken: string | null = null;
 
+type ApiPayload = {
+  data?: unknown;
+  error?: {
+    code?: string;
+    message?: string;
+  };
+};
+
 export class ApiClientError extends Error {
   constructor(
     message: string,
@@ -52,22 +60,24 @@ async function getCsrfToken() {
     cache: "no-store",
   });
   const payload = await safeJson(response);
-  if (!response.ok || typeof payload?.data?.token !== "string") {
+  const data = isRecord(payload?.data) ? payload.data : null;
+  if (!response.ok || typeof data?.token !== "string") {
     throw new ApiClientError("The security token could not be created.", response.status, "csrf_unavailable");
   }
-  csrfToken = payload.data.token;
+  csrfToken = data.token;
   return csrfToken;
 }
 
-async function safeJson(response: Response): Promise<any> {
+async function safeJson(response: Response): Promise<ApiPayload | null> {
   try {
-    return await response.json();
+    const payload: unknown = await response.json();
+    return isRecord(payload) ? (payload as ApiPayload) : null;
   } catch {
     return null;
   }
 }
 
-function apiClientError(status: number, payload: any) {
+function apiClientError(status: number, payload: ApiPayload | null) {
   return new ApiClientError(
     payload?.error?.message ?? "The request could not be completed.",
     status,
@@ -75,3 +85,6 @@ function apiClientError(status: number, payload: any) {
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}

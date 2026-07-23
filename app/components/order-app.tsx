@@ -16,7 +16,8 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { apiRequest } from "../lib/api/client";
 import {
   defaultMenuImage,
   formatCurrency,
@@ -28,7 +29,6 @@ import type {
   MenuItem,
   RestaurantOrder,
 } from "../lib/restaurant-types";
-import { getBrowserSupabase } from "../lib/supabase/client";
 import { FoodMark } from "./brand";
 import { SiteHeader } from "./site-header";
 
@@ -80,143 +80,68 @@ export function OrderApp({
     configured ? null : "Ordering is unavailable until the restaurant backend is configured.",
   );
   const [toast, setToast] = useState<string | null>(null);
-  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadMenu = useCallback(async () => {
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
-    const [categoryResult, itemResult] = await Promise.all([
-      supabase
-        .from("menu_categories")
-        .select("id,restaurant_id,name,slug,sort_order,active")
-        .eq("active", true)
-        .order("sort_order"),
-      supabase
-        .from("menu_items")
-        .select(
-          "id,restaurant_id,category_id,name,description,price,is_veg,available,bestseller,image_url,sort_order,category:menu_categories(id,name,slug)",
-        )
-        .eq("available", true)
-        .order("sort_order"),
-    ]);
-    if (categoryResult.error || itemResult.error) {
-      setError(categoryResult.error?.message ?? itemResult.error?.message ?? "The menu could not be loaded.");
-      return;
+    try {
+      const payload = await apiRequest<{ categories: MenuCategory[]; items: MenuItem[] }>("/api/v1/menu");
+      setCategories(payload.categories ?? []);
+      const nextItems = (payload.items ?? []).map(normalizeMenuItem);
+      setItems(nextItems);
+      const availableIds = new Set(nextItems.map((item) => item.id));
+      setCart((current) => current.filter((line) => availableIds.has(line.id)));
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "The menu could not be loaded.");
     }
-    setCategories((categoryResult.data ?? []) as MenuCategory[]);
-    const nextItems = ((itemResult.data ?? []) as unknown as MenuItem[]).map(
-      normalizeMenuItem,
-    );
-    setItems(nextItems);
-    const availableIds = new Set(nextItems.map((item) => item.id));
-    setCart((current) => current.filter((line) => availableIds.has(line.id)));
   }, []);
 
   const loadOrders = useCallback(async (sessionId: string) => {
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
-    const result = await supabase
-      .from("orders")
-      .select(
-        "id,order_number,branch_id,table_session_id,status,subtotal,parcel_charge,tax,total,notes,spice_level,placed_at,served_at,paid_at,order_items(*)",
-      )
-      .eq("table_session_id", sessionId)
-      .order("placed_at", { ascending: false });
-    if (result.error) {
-      setError(result.error.message);
-      return;
+    try {
+      const result = await apiRequest<RestaurantOrder[]>(
+        `/api/v1/orders?tableSessionId=${encodeURIComponent(sessionId)}`,
+      );
+      setOrders(
+        (result ?? []).map((order) => ({
+          ...order,
+          subtotal: Number(order.subtotal),
+          parcel_charge: Number(order.parcel_charge),
+          tax: Number(order.tax),
+          total: Number(order.total),
+        })),
+      );
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "Order status could not be loaded.");
     }
-    setOrders(
-      ((result.data ?? []) as unknown as RestaurantOrder[]).map((order) => ({
-        ...order,
-        subtotal: Number(order.subtotal),
-        parcel_charge: Number(order.parcel_charge),
-        tax: Number(order.tax),
-        total: Number(order.total),
-      })),
-    );
   }, []);
 
   useEffect(() => {
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
     if (!initialItems.length) queueMicrotask(() => void loadMenu());
-
-    const menuChannel = supabase
-      .channel("public-menu")
-      .on("postgres_changes", { event: "*", schema: "public", table: "menu_items" }, () => {
-        void loadMenu();
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "menu_categories" }, () => {
-        void loadMenu();
-      })
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(menuChannel);
-    };
+    const menuTimer = window.setInterval(() => void loadMenu(), 30_000);
+    return () => window.clearInterval(menuTimer);
   }, [initialItems.length, loadMenu]);
 
   useEffect(() => {
     if (!tableToken) return;
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
-    const client = supabase;
-
     let cancelled = false;
-    let orderChannel: ReturnType<typeof supabase.channel> | null = null;
+    let orderTimer: number | null = null;
 
     async function initializeTable() {
       setLoading(true);
       setError(null);
-      const sessionResult = await client.auth.getSession();
-      if (sessionResult.error) throw sessionResult.error;
-      if (!sessionResult.data.session) {
-        const anonymousResult = await client.auth.signInAnonymously();
-        if (anonymousResult.error) throw anonymousResult.error;
-      }
-
-      const openResult = await client.rpc("open_table_session", {
-        p_qr_token: tableToken,
+      const context = await apiRequest<TableContext>("/api/v1/table-sessions", {
+        method: "POST",
+        body: JSON.stringify({ qrToken: tableToken }),
       });
-      if (openResult.error) throw openResult.error;
       if (cancelled) return;
-
-      const context = openResult.data as TableContext;
       context.tax_rate = Number(context.tax_rate);
       setTable(context);
       await loadOrders(context.session_id);
-
-      orderChannel = client
-        .channel(`table-orders-${context.session_id}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "orders",
-            filter: `table_session_id=eq.${context.session_id}`,
-          },
-          () => {
-            if (reloadTimer.current) clearTimeout(reloadTimer.current);
-            reloadTimer.current = setTimeout(() => void loadOrders(context.session_id), 150);
-          },
-        )
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "order_items" },
-          () => {
-            if (reloadTimer.current) clearTimeout(reloadTimer.current);
-            reloadTimer.current = setTimeout(() => void loadOrders(context.session_id), 150);
-          },
-        )
-        .subscribe();
+      orderTimer = window.setInterval(() => void loadOrders(context.session_id), 5_000);
     }
 
-    initializeTable()
+    void initializeTable()
       .catch((problem: unknown) => {
         if (!cancelled) {
-          setError(problem instanceof Error ? problem.message : "This table QR code could not be opened.");
+          setError(problem instanceof Error ? problem.message : "This table could not be opened.");
         }
       })
       .finally(() => {
@@ -225,8 +150,7 @@ export function OrderApp({
 
     return () => {
       cancelled = true;
-      if (reloadTimer.current) clearTimeout(reloadTimer.current);
-      if (orderChannel) void client.removeChannel(orderChannel);
+      if (orderTimer !== null) window.clearInterval(orderTimer);
     };
   }, [loadOrders, tableToken]);
 
@@ -283,48 +207,46 @@ export function OrderApp({
 
   async function placeOrder() {
     if (!cart.length || !table || submitting) return;
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
     setSubmitting(true);
     setError(null);
-    const result = await supabase.rpc("place_table_order", {
-      p_table_session_id: table.session_id,
-      p_items: cart.map((line) => ({
-        menu_item_id: line.id,
-        quantity: line.quantity,
-      })),
-      p_notes: note,
-      p_spice_level: spice,
-      p_is_parcel: parcel,
-    });
-    if (result.error) {
-      setError(result.error.message);
+    try {
+      const created = await apiRequest<{ order_number: number }>("/api/v1/orders", {
+        method: "POST",
+        body: JSON.stringify({
+          tableSessionId: table.session_id,
+          items: cart.map((line) => ({ menuItemId: line.id, quantity: line.quantity })),
+          notes: note,
+          spiceLevel: spice,
+          isParcel: parcel,
+        }),
+      });
+      setCart([]);
+      setNote("");
+      setParcel(false);
+      setCartOpen(false);
+      setToast(`Order #AT-${created.order_number} was sent to the kitchen.`);
+      await loadOrders(table.session_id);
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "The order could not be placed.");
+    } finally {
       setSubmitting(false);
-      return;
     }
-    const created = result.data as { order_number: number };
-    setCart([]);
-    setNote("");
-    setParcel(false);
-    setCartOpen(false);
-    setToast(`Order #AT-${created.order_number} was sent to the kitchen.`);
-    await loadOrders(table.session_id);
-    setSubmitting(false);
   }
 
   async function request(label: string) {
     if (!table) return;
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
-    const result = await supabase.rpc("create_service_request", {
-      p_table_session_id: table.session_id,
-      p_request_type: label.toUpperCase(),
-    });
-    if (result.error) {
-      setError(result.error.message);
-      return;
+    try {
+      await apiRequest("/api/v1/service-requests", {
+        method: "POST",
+        body: JSON.stringify({
+          tableSessionId: table.session_id,
+          requestType: label.toUpperCase(),
+        }),
+      });
+      setToast(`${label} request sent to the service team.`);
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "The service request could not be sent.");
     }
-    setToast(`${label} request sent to the service team.`);
   }
 
   return (

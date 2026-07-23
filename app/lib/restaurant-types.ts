@@ -70,8 +70,13 @@ export type RestaurantOrder = {
   notes: string | null;
   spice_level: string | null;
   placed_at: string;
+  accepted_at: string | null;
+  preparing_at: string | null;
+  ready_at: string | null;
   served_at: string | null;
+  billed_at: string | null;
   paid_at: string | null;
+  cancelled_at: string | null;
   order_items?: OrderItem[];
   table_session?: {
     id: string;

@@ -20,11 +20,14 @@ export async function GET() {
     .maybeSingle();
 
   if (result.error || !result.data) {
+    console.error("Health check database query failed", {
+      code: result.error?.code ?? "restaurant_missing",
+    });
     return NextResponse.json(
       {
         ok: false,
         database: "unavailable",
-        message: result.error?.message ?? "Restaurant record is missing",
+        message: "The restaurant database is temporarily unavailable.",
       },
       { status: 503 },
     );

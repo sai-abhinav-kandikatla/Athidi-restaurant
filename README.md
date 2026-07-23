@@ -1,120 +1,156 @@
 # Athidhi Restaurant Operating System
 
-Athidhi ROS is a production application for the public restaurant website, QR
-table ordering, kitchen operations, waiter requests, billing, table management,
-menu management, analytics, and restaurant settings.
+Athidhi ROS combines the public restaurant site, QR table ordering, and a
+role-protected staff operating system for orders, kitchen, waiter requests,
+billing, tables, menu, analytics, and settings.
 
-The customer application runs at `http://localhost:3000`. The protected staff
-application runs at `http://localhost:3001`. Both use the same Supabase Auth,
-PostgreSQL, and Realtime project.
+## Security model
 
-## What is implemented
+- Staff authenticate with Supabase email/password authentication.
+- Supabase SSR stores staff sessions in secure, HttpOnly, SameSite cookies and
+  refreshes them through `proxy.ts`.
+- Every `/admin` route is authenticated on the server. Route access is enforced
+  for `OWNER`, `MANAGER`, `CHEF`, `WAITER`, and `CASHIER`; an incorrect role
+  receives HTTP 403.
+- The normalized `staff.id` is the Supabase `auth.users.id`, which provides the
+  required one-to-one auth-user mapping. Staff records also contain the
+  restaurant, branch, role, name, and active status. Inactive staff are rejected.
+- Customers do not create accounts or anonymous Supabase sessions. Opening a QR
+  table issues a random capability token in a secure HttpOnly cookie. Only its
+  HMAC hash is stored, and every guest order or service request validates both
+  the requested table session and token.
+- Browser mutations use same-origin checks plus a double-submit CSRF token.
+  Login, table-session creation, orders, waiter requests, and bill requests are
+  protected by durable database-backed rate limits.
+- RLS, database functions, and API handlers all enforce tenant, branch,
+  permission, and role boundaries. Client-side navigation is not an
+  authorization boundary.
+- Important login, order, service, settings, payment, and table-session events
+  are written to `activity_logs` without secrets or raw client identifiers.
+- Production responses enforce HTTPS, HSTS, a restrictive CSP, clickjacking and
+  MIME protections, and no-store caching on admin/API responses.
 
-- Supabase Auth password sign-in for staff with database-backed roles
-- Invisible anonymous Supabase Auth sessions for guests who scan a table QR
-- Database-priced order creation with atomic PostgreSQL functions
-- Live order tracking and kitchen status transitions
-- Live waiter, water, cutlery, tissue, and bill requests
-- Payment recording for UPI, cash, and card
-- Real table state, capacity, and QR URL management
-- Real menu CRUD, prices, availability, categories, and parcel charges
-- Revenue, ticket, dish, and service-time analytics from orders and payments
-- Restaurant profile, address, GST, hours, tax, and ordering settings
-- Row Level Security for guest-owned data and branch-scoped staff data
-- Supabase Realtime subscriptions for orders, items, requests, payments, tables,
-  and menu availability
-- Health endpoint at `/api/health`
-- Cloudflare Sites/Vinext and Vercel production builds
+## Staff routes
 
-## Local Supabase
+| Route | Roles |
+| --- | --- |
+| `/admin/dashboard` | Owner, Manager |
+| `/admin/orders` | Owner, Manager |
+| `/admin/live-tables` | Owner, Manager |
+| `/admin/kitchen` | Owner, Manager, Chef |
+| `/admin/waiter` | Owner, Manager, Waiter |
+| `/admin/settings` | Owner, Manager (manager settings are limited) |
+| `/admin/billing` | Owner, Cashier |
 
-Docker Desktop must be running.
+Unauthenticated staff are redirected to `/admin/login` and returned to their
+authorized workspace after login. Authenticated staff are redirected away from
+the login page. Logout invalidates the Supabase session.
+
+## REST API
+
+The versioned API starts at `/api/v1`. Successful responses use
+`{ "data": ... }`; failures use a sanitized
+`{ "error": { "code": "...", "message": "..." } }` envelope.
+
+- `GET /api/v1` — API catalog and authentication summary
+- `GET /api/v1/openapi` — OpenAPI 3.1 contract
+- `GET /api/v1/restaurant` and `GET /api/v1/menu` — public restaurant data
+- `GET /api/v1/security/csrf` — browser CSRF token
+- `POST /api/v1/table-sessions` — open a secure QR table session
+- `GET|POST /api/v1/orders` — authorized order tracking and placement
+- `PATCH /api/v1/orders/{id}/status` — role-scoped kitchen workflow
+- `GET|POST /api/v1/service-requests` — waiter and bill requests
+- `GET|POST /api/v1/orders/{id}/payments` — cashier/management payments
+- `GET|POST /api/v1/tables` — owner/manager table management
+- `GET|POST /api/v1/menu/categories` and `/menu/items` — menu management
+- `GET /api/v1/analytics` — management reporting
+- `GET /api/v1/operations` — role-scoped staff workspace data
+- `GET /api/v1/operations/stream` — branch-scoped staff realtime invalidations (SSE)
+- `PATCH /api/v1/waiter-tasks/{id}/assignment` — assign or release a waiter task
+- `GET|POST|DELETE /api/v1/auth/session` — staff session lifecycle
+
+Staff browser requests use the HttpOnly Supabase session cookie. Trusted
+non-browser staff clients may send `Authorization: Bearer <supabase-jwt>`.
+Guest endpoints use the HttpOnly table-session cookie issued by
+`POST /api/v1/table-sessions`. Browser state-changing requests must also send
+the `x-csrf-token` returned by `GET /api/v1/security/csrf`.
+
+## Environment
+
+Copy `.env.example` to `.env.local`. Never commit real values.
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-public-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-server-only-service-role-key
+JWT_SECRET=at-least-32-random-bytes
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+NEXT_PUBLIC_ADMIN_URL=http://localhost:3001
+APP_SURFACE=customer
+```
+
+`SUPABASE_SERVICE_ROLE_KEY` and `JWT_SECRET` are server-only. Never prefix them
+with `NEXT_PUBLIC_`, embed them in source files, or expose them to the browser.
+
+## Database setup
+
+Docker Desktop is required for local Supabase:
 
 ```bash
 npx supabase start
 npx supabase db reset
 ```
 
-The local Supabase configuration enables anonymous guest sign-in and executes
-`supabase/schema.sql` followed by `supabase/seed.sql`.
+The canonical migrations are
+`supabase/migrations/20260723153000_production_auth_security.sql` and
+`supabase/migrations/20260723170000_phase4_waiter_workspace.sql`; local reset
+then runs `supabase/seed.sql`. Anonymous sign-in is disabled.
 
-Copy `.env.example` to `.env.local`, then use the API URL and anon key printed by
-`npx supabase status`:
+For a new hosted project, link the project and push migrations:
 
-```env
-NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-local-anon-key
-NEXT_PUBLIC_SITE_URL=http://localhost:3000
-NEXT_PUBLIC_ADMIN_URL=http://localhost:3001
-APP_SURFACE=customer
+```bash
+npx supabase login
+npx supabase link --project-ref your-project-ref
+npx supabase db push
 ```
 
-Create the first non-anonymous user in Supabase Studio Authentication. Update
-the email in `supabase/create-owner.sql`, then run that file in the SQL editor.
-The user will receive the seeded Owner role.
+Then run `supabase/seed.sql` and the edited `supabase/create-owner.sql` in the
+Supabase SQL editor. For a database originally created from the older
+`supabase/schema.sql`, run `supabase/api-support.sql` once before deploying this
+application.
 
-For a hosted Supabase project:
+Create the owner in Supabase Authentication first, replace the email in
+`supabase/create-owner.sql`, and run it. Every authenticated account must have
+exactly one active `staff` row before it can enter the admin application.
 
-1. Enable Anonymous Sign-Ins in Authentication settings.
-2. Add the customer and admin `/auth/callback` URLs to allowed redirects.
-3. Run `supabase/schema.sql`, `supabase/seed.sql`, then the edited
-   `supabase/create-owner.sql`.
-4. Add the hosted URL and anon key to both application environments.
+## Development
 
-No service-role key is used by the web application.
-
-## Run both applications
-
-Use two terminals:
+Run the customer and dedicated admin surfaces in separate terminals:
 
 ```bash
 npm run dev
-```
-
-```bash
 npm run dev:admin
 ```
 
-The admin process sets `APP_SURFACE=admin`, so its root URL opens the protected
-staff application. The customer process remains on port 3000.
+The customer surface uses port 3000 and the admin surface uses port 3001.
 
-## Validation
+## Verification
 
 ```bash
-npm run lint
 npm run typecheck
+npm run lint
 npm test
 npm run build:vercel
 ```
 
-`npm test` performs the Cloudflare/Vinext production build and verifies the
-server-rendered customer surface and health behavior. `build:vercel` verifies
-the native Next.js deployment output.
+The rendered tests verify public rendering, security headers, CSRF issuance,
+admin redirects, protected staff APIs, the API catalog, and friendly health
+errors. Run `npm run test:e2e` against a migrated development database for the
+full QR-order, waiter-request, role, payment, and cleanup workflow.
 
-The database end-to-end test additionally needs the local service-role key for
-test setup and cleanup only. It is never used by either web application:
+## Deployment
 
-```powershell
-$env:SUPABASE_SERVICE_ROLE_KEY="the local service-role key from supabase status"
-npm run test:e2e
-Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
-```
-
-That test opens an anonymous QR session, places and prices an order, creates a
-waiter request, verifies staff RLS, receives a Realtime update, advances the
-kitchen workflow, records payment, and cleans up its temporary records.
-
-## Vercel deployment
-
-Create two Vercel projects from the same repository:
-
-- Customer project: `APP_SURFACE=customer`
-- Admin project: `APP_SURFACE=admin`
-
-Give both projects the same `NEXT_PUBLIC_SUPABASE_URL` and
-`NEXT_PUBLIC_SUPABASE_ANON_KEY`. Set `NEXT_PUBLIC_SITE_URL` to the customer
-domain and `NEXT_PUBLIC_ADMIN_URL` to the admin domain. Add both callback URLs
-to Supabase Auth.
-
-Before opening to guests, update the restaurant phone, WhatsApp, address, GSTIN,
-hours, and menu from the staff Settings and Menu screens.
+The repository is connected to an OpenAI Sites project through
+`.openai/hosting.json`. Configure all environment variables in the hosting
+runtime, keep server-only values secret, apply the database migration, and only
+then deploy the saved source version.
