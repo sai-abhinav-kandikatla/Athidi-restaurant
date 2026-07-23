@@ -20,6 +20,7 @@ import {
   ShoppingBag,
   Store,
   Table2,
+  UserCheck,
   Volume2,
   VolumeX,
   X,
@@ -47,7 +48,7 @@ type Section =
   | "Live Tables"
   | "Orders"
   | "Kitchen"
-  | "Service Requests"
+  | "Waiter"
   | "Settings";
 
 type ConnectionStatus = "connected" | "reconnecting" | "offline";
@@ -107,7 +108,7 @@ const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
   { label: "Live Tables", icon: Table2 },
   { label: "Orders", icon: ShoppingBag },
   { label: "Kitchen", icon: ChefHat },
-  { label: "Service Requests", icon: BellRing },
+  { label: "Waiter", icon: UserCheck },
   { label: "Settings", icon: Settings },
 ];
 
@@ -117,7 +118,6 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
   const [section, setSection] = useState<Section>("Dashboard");
   const [data, setData] = useState<OperationalData>(emptyData);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -128,6 +128,8 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifFilter, setNotifFilter] = useState<string>("all");
+  const [serveConfirmOrder, setServeConfirmOrder] = useState<RestaurantOrder | null>(null);
+  const [assignments, setAssignments] = useState<Record<string, string>>({});
 
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tickerTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -153,12 +155,12 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
         gain.connect(ctx.destination);
         osc.start();
         osc.stop(ctx.currentTime + duration);
-      } catch { /* ignore audio play restrictions */ }
+      } catch { /* ignore audio restrictions */ }
     },
     [soundEnabled],
   );
 
-  /* ─── 1-Second Ticker for Elapsed Timers & Clock ─── */
+  /* ─── 1-Second Ticker for Timers & Clock ─── */
   useEffect(() => {
     tickerTimer.current = setInterval(() => {
       setNowTime(Date.now());
@@ -179,8 +181,7 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
         return;
       }
 
-      if (quiet) setRefreshing(true);
-      else setLoading(true);
+      if (!quiet) setLoading(true);
 
       try {
         const [
@@ -246,7 +247,6 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
           setError(firstError.message);
           setConnection("reconnecting");
           setLoading(false);
-          setRefreshing(false);
           return;
         }
 
@@ -332,6 +332,15 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
               message: `Order #AT-${o.order_number} for Table ${tNum} is Ready to serve!`,
             });
           }
+          if (o.status === "SERVED") {
+            logs.push({
+              id: `srv-${o.id}`,
+              time: timeStr,
+              type: "order",
+              icon: "✓",
+              message: `Food served for Order #AT-${o.order_number} at Table ${tNum}`,
+            });
+          }
         });
         requests.slice(0, 15).forEach((r) => {
           const tNum = r.table_session?.table?.number ?? "?";
@@ -344,7 +353,7 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
             message: `Table ${tNum} requested ${r.request_type.toLowerCase()}`,
           });
         });
-        setActivityLogs(logs.sort((a, b) => b.id.localeCompare(a.id)).slice(0, 20));
+        setActivityLogs(logs.sort((a, b) => b.id.localeCompare(a.id)).slice(0, 25));
 
         const categories = (categoryResult.data ?? []) as MenuCategory[];
         const categoryMap = new Map(categories.map((c) => [c.id, c]));
@@ -373,12 +382,10 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
         setError(null);
         setConnection("connected");
         setLoading(false);
-        setRefreshing(false);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to load data.");
         setConnection("offline");
         setLoading(false);
-        setRefreshing(false);
       }
     },
     [staff.branchId, staff.restaurantId, playChime],
@@ -411,7 +418,6 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
         else if (status === "CLOSED" || status === "CHANNEL_ERROR") setConnection("reconnecting");
       });
 
-    // 30-Second Fallback Polling Timer
     pollTimer.current = setInterval(() => {
       void loadData(true);
     }, 30_000);
@@ -446,7 +452,6 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
   const occupiedTables = useMemo(() => data.tables.filter((t) => t.state !== "AVAILABLE"), [data.tables]);
   const availableTables = useMemo(() => data.tables.filter((t) => t.state === "AVAILABLE"), [data.tables]);
 
-  /* Most ordered item today */
   const mostOrderedToday = useMemo(() => {
     const map = new Map<string, number>();
     todayOrders.forEach((o) => {
@@ -465,7 +470,6 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
     return topName;
   }, [todayOrders]);
 
-  /* Kitchen prep times */
   const kitchenTimes = useMemo(() => {
     const readyOrServed = data.orders.filter((o) => o.served_at || o.status === "READY");
     const prepMins = readyOrServed
@@ -493,7 +497,7 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
     return true;
   }
 
-  /* ─── Single Order Advance (New -> Preparing -> Ready -> Served) ─── */
+  /* ─── Advance Order Status ─── */
   async function advanceOrder(order: RestaurantOrder) {
     const supabase = getBrowserSupabase();
     if (!supabase) return;
@@ -507,6 +511,13 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
         p_order_id: order.id,
         p_status: next,
       });
+      if (!res.error && order.table_session?.table?.id) {
+        // Automatically set table state to DINING when food is served
+        await supabase
+          .from("tables")
+          .update({ state: "DINING" })
+          .eq("id", order.table_session.table.id);
+      }
       return { error: res.error };
     }, `Order #AT-${order.order_number} is now ${statusLabel(next).toLowerCase()}.`);
   }
@@ -522,6 +533,15 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
         .eq("id", req.id);
       return { error: res.error };
     }, `${req.request_type.toLowerCase()} request for Table ${req.table_session?.table?.number ?? ""} resolved.`);
+  }
+
+  /* ─── Toggle Waiter Assignment ─── */
+  function toggleAssign(id: string) {
+    setAssignments((prev) => ({
+      ...prev,
+      [id]: prev[id] ? "" : staff.fullName,
+    }));
+    setToast(`Assignment updated to ${assignments[id] ? "Unassigned" : staff.fullName}`);
   }
 
   /* ─── Sign Out ─── */
@@ -566,7 +586,9 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
               <Icon size={19} />
               <span>{label}</span>
               {label === "Kitchen" && activeOrders.length > 0 && <b>{activeOrders.length}</b>}
-              {label === "Service Requests" && openRequests.length > 0 && <b>{openRequests.length}</b>}
+              {label === "Waiter" && openRequests.length + data.orders.filter((o) => o.status === "READY").length > 0 && (
+                <b>{openRequests.length + data.orders.filter((o) => o.status === "READY").length}</b>
+              )}
             </button>
           ))}
         </nav>
@@ -585,7 +607,7 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
         </div>
       </aside>
 
-      {/* Main Main Workspace */}
+      {/* Main Workspace */}
       <section className="admin-main">
         {/* Topbar */}
         <header className="admin-header">
@@ -728,13 +750,17 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
                 />
               )}
 
-              {section === "Service Requests" && (
-                <ServiceRequestsWorkspace
-                  requests={data.requests}
+              {section === "Waiter" && (
+                <WaiterWorkspace
                   orders={data.orders}
+                  requests={data.requests}
                   search={search}
-                  resolve={resolveRequest}
-                  advance={advanceOrder}
+                  nowTime={nowTime}
+                  staffName={staff.fullName}
+                  assignments={assignments}
+                  toggleAssign={toggleAssign}
+                  onServePrompt={(order) => setServeConfirmOrder(order)}
+                  resolveRequest={resolveRequest}
                 />
               )}
 
@@ -751,6 +777,44 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
           )}
         </div>
       </section>
+
+      {/* Serve Food Confirmation Modal */}
+      {serveConfirmOrder && (
+        <div className="admin-modal-backdrop" onClick={() => setServeConfirmOrder(null)}>
+          <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Serve Food Confirmation</h3>
+            <p>
+              Are you sure you want to mark Order <strong>#AT-{serveConfirmOrder.order_number}</strong> for{" "}
+              <strong>Table {tableNumber(serveConfirmOrder)}</strong> as SERVED?
+            </p>
+
+            <div className="modal-items-list">
+              {serveConfirmOrder.order_items?.map((item) => (
+                <div key={item.id}>
+                  <span>{item.quantity}× {item.item_name}</span>
+                  <strong>{formatCurrency(item.line_total)}</strong>
+                </div>
+              ))}
+            </div>
+
+            <div className="modal-actions">
+              <button className="secondary" onClick={() => setServeConfirmOrder(null)}>
+                Cancel
+              </button>
+              <button
+                className="primary"
+                onClick={() => {
+                  const target = serveConfirmOrder;
+                  setServeConfirmOrder(null);
+                  void advanceOrder(target);
+                }}
+              >
+                Confirm Served ✓
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Notification Center Flyout */}
       {notifOpen && (
@@ -973,7 +1037,7 @@ function DashboardWorkspace({
               <h2>Active Requests</h2>
               <span>{data.requests.filter((r) => r.status !== "RESOLVED").length} open</span>
             </div>
-            <button onClick={() => onSection("Service Requests")}>
+            <button onClick={() => onSection("Waiter")}>
               Queue <ChevronRight size={15} />
             </button>
           </div>
@@ -1295,21 +1359,36 @@ function KitchenWorkspace({
   );
 }
 
-/* ─────────── 5. Service Requests Workspace ─────────── */
+/* ─────────── 5. Waiter Workspace (Phase 4) ─────────── */
 
-function ServiceRequestsWorkspace({
-  requests,
+function WaiterWorkspace({
   orders,
+  requests,
   search,
-  resolve,
-  advance,
+  nowTime,
+  staffName,
+  assignments,
+  toggleAssign,
+  onServePrompt,
+  resolveRequest,
 }: {
-  requests: ServiceRequest[];
   orders: RestaurantOrder[];
+  requests: ServiceRequest[];
   search: string;
-  resolve: (r: ServiceRequest) => Promise<void>;
-  advance: (o: RestaurantOrder) => Promise<void>;
+  nowTime: number;
+  staffName: string;
+  assignments: Record<string, string>;
+  toggleAssign: (id: string) => void;
+  onServePrompt: (o: RestaurantOrder) => void;
+  resolveRequest: (r: ServiceRequest) => Promise<void>;
 }) {
+  const [tab, setTab] = useState<"ready" | "requests" | "tasks" | "performance">("ready");
+
+  const readyOrders = useMemo(
+    () => orders.filter((o) => o.status === "READY" && orderMatches(o, search)),
+    [orders, search],
+  );
+
   const openRequests = useMemo(
     () =>
       requests.filter(
@@ -1320,62 +1399,197 @@ function ServiceRequestsWorkspace({
     [requests, search],
   );
 
-  const readyOrders = useMemo(
-    () => orders.filter((o) => o.status === "READY" && orderMatches(o, search)),
-    [orders, search],
-  );
+  /* Unified Prioritized Live Task Queue */
+  const taskQueue = useMemo(() => {
+    type TaskItem = {
+      id: string;
+      priority: number; // 1 = Food Ready, 2 = Bill, 3 = Waiter, 4 = Water, 5 = Tissue
+      priorityLabel: string;
+      tableNumber: number | string;
+      title: string;
+      subtitle: string;
+      createdTime: number;
+      onAction: () => void;
+      actionLabel: string;
+    };
+
+    const list: TaskItem[] = [];
+
+    readyOrders.forEach((o) => {
+      list.push({
+        id: `ready-${o.id}`,
+        priority: 1,
+        priorityLabel: "1️⃣ Food Ready",
+        tableNumber: tableNumber(o),
+        title: `Order #AT-${o.order_number}`,
+        subtitle: o.order_items?.map((i) => `${i.quantity}× ${i.item_name}`).join(", ") || "Items ready",
+        createdTime: new Date(o.placed_at).getTime(),
+        onAction: () => onServePrompt(o),
+        actionLabel: "Serve Food",
+      });
+    });
+
+    openRequests.forEach((r) => {
+      const typePrio = r.request_type === "BILL" ? 2 : r.request_type === "WAITER" ? 3 : r.request_type === "WATER" ? 4 : 5;
+      const typeLabel = r.request_type === "BILL" ? "2️⃣ Bill Request" : r.request_type === "WAITER" ? "3️⃣ Waiter Call" : r.request_type === "WATER" ? "4️⃣ Water" : "5️⃣ Tissue";
+
+      list.push({
+        id: `req-${r.id}`,
+        priority: typePrio,
+        priorityLabel: typeLabel,
+        tableNumber: r.table_session?.table?.number ?? "—",
+        title: `${r.request_type} Request`,
+        subtitle: `Requested ${relativeTime(r.created_at)}`,
+        createdTime: new Date(r.created_at).getTime(),
+        onAction: () => void resolveRequest(r),
+        actionLabel: "Resolve",
+      });
+    });
+
+    // Sort by Priority ascending, then oldest time ascending
+    return list.sort((a, b) => a.priority - b.priority || a.createdTime - b.createdTime);
+  }, [readyOrders, openRequests, onServePrompt, resolveRequest]);
+
+  /* Waiter Performance Stats */
+  const servedToday = useMemo(() => orders.filter((o) => o.status === "SERVED" || o.served_at), [orders]);
 
   return (
-    <div className="waiter-workspace-grid">
-      {/* Service Queue */}
-      <section className="admin-card">
-        <div className="admin-card__head">
-          <div>
-            <h2>Service Requests Queue</h2>
-            <span>{openRequests.length} awaiting action</span>
-          </div>
+    <div>
+      <div className="view-intro">
+        <div>
+          <p className="eyebrow eyebrow--maroon"><span /> Waiter Workspace</p>
+          <h2>Food ready queue & guest assistance</h2>
         </div>
-        <div className="admin-card-list">
-          {openRequests.map((req) => (
-            <article className="request-row" key={req.id}>
-              <span className="table-bubble">T{req.table_session?.table?.number ?? "—"}</span>
-              <div>
-                <strong>{req.request_type} Request</strong>
-                <small>{relativeTime(req.created_at)}</small>
-              </div>
-              <button className="resolve-button" onClick={() => void resolve(req)}>
-                Resolve Request
-              </button>
-            </article>
-          ))}
+      </div>
+
+      {/* Waiter Workspace Tabs */}
+      <div className="waiter-tabs">
+        <button className={tab === "ready" ? "active" : ""} onClick={() => setTab("ready")}>
+          🍽 Ready Orders ({readyOrders.length})
+        </button>
+        <button className={tab === "requests" ? "active" : ""} onClick={() => setTab("requests")}>
+          🛎 Service Requests ({openRequests.length})
+        </button>
+        <button className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>
+          📋 Live Tasks ({taskQueue.length})
+        </button>
+        <button className={tab === "performance" ? "active" : ""} onClick={() => setTab("performance")}>
+          📊 Performance
+        </button>
+      </div>
+
+      {/* Tab 1: Ready Orders */}
+      {tab === "ready" && (
+        <div className="waiter-feed">
+          {readyOrders.map((o) => {
+            const elapsedMins = Math.floor((nowTime - new Date(o.placed_at).getTime()) / 60000);
+            const elapsedSecs = Math.floor(((nowTime - new Date(o.placed_at).getTime()) % 60000) / 1000);
+            const assignedStaff = assignments[o.id];
+
+            return (
+              <article key={o.id} className="waiter-food-card">
+                <div className="waiter-food-card__head">
+                  <div>
+                    <strong>🍽 Table {tableNumber(o)}</strong>
+                    <small>Order #AT-{o.order_number}</small>
+                  </div>
+                  <span className="ticket-timer">Ready {elapsedMins}m {elapsedSecs}s</span>
+                </div>
+
+                <div className="waiter-food-card__items">
+                  {o.order_items?.map((item) => (
+                    <div key={item.id}>
+                      <span>{item.quantity}× {item.item_name}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="waiter-food-card__actions">
+                  <button className="assign-btn" onClick={() => toggleAssign(o.id)}>
+                    {assignedStaff ? `Serving: ${assignedStaff}` : "Assign to Me"}
+                  </button>
+                  <button className="serve-btn" onClick={() => onServePrompt(o)}>
+                    Serve Food →
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+          {!readyOrders.length && <div className="admin-empty">No food currently ready to be served.</div>}
+        </div>
+      )}
+
+      {/* Tab 2: Service Requests */}
+      {tab === "requests" && (
+        <div className="waiter-feed">
+          {openRequests.map((req) => {
+            const assignedStaff = assignments[req.id];
+            return (
+              <article key={req.id} className="waiter-request-card">
+                <div className="waiter-request-card__head">
+                  <strong>Table {req.table_session?.table?.number ?? "—"}</strong>
+                  <span className="req-type-pill">{req.request_type} Request</span>
+                </div>
+                <small>Requested {relativeTime(req.created_at)}</small>
+                <div className="waiter-food-card__actions">
+                  <button className="assign-btn" onClick={() => toggleAssign(req.id)}>
+                    {assignedStaff ? `Assigned: ${assignedStaff}` : "Assign"}
+                  </button>
+                  <button className="serve-btn" onClick={() => void resolveRequest(req)}>
+                    Resolve Request
+                  </button>
+                </div>
+              </article>
+            );
+          })}
           {!openRequests.length && <div className="admin-empty">All service requests resolved!</div>}
         </div>
-      </section>
+      )}
 
-      {/* Ready to Serve Queue */}
-      <section className="admin-card">
-        <div className="admin-card__head">
-          <div>
-            <h2>Ready to Serve</h2>
-            <span>{readyOrders.length} food orders</span>
-          </div>
-        </div>
-        <div className="admin-card-list">
-          {readyOrders.map((o) => (
-            <article className="request-row" key={o.id}>
-              <span className="table-bubble">T{tableNumber(o)}</span>
+      {/* Tab 3: Unified Prioritized Task Queue */}
+      {tab === "tasks" && (
+        <div className="waiter-feed">
+          {taskQueue.map((task) => (
+            <article key={task.id} className="waiter-task-card">
+              <span className="priority-badge">{task.priorityLabel}</span>
               <div>
-                <strong>Order #AT-{o.order_number}</strong>
-                <small>{o.order_items?.length ?? 0} items ready</small>
+                <strong>Table {task.tableNumber} — {task.title}</strong>
+                <p>{task.subtitle}</p>
               </div>
-              <button className="resolve-button" onClick={() => void advance(o)}>
-                Mark Served
+              <button className="serve-btn" onClick={task.onAction}>
+                {task.actionLabel}
               </button>
             </article>
           ))}
-          {!readyOrders.length && <div className="admin-empty">No orders waiting to be served.</div>}
+          {!taskQueue.length && <div className="admin-empty">All tasks completed!</div>}
         </div>
-      </section>
+      )}
+
+      {/* Tab 4: Performance */}
+      {tab === "performance" && (
+        <div className="waiter-performance-grid">
+          <article className="perf-card">
+            <span>Deliveries Today</span>
+            <strong>{servedToday.length}</strong>
+            <small>Orders served</small>
+          </article>
+          <article className="perf-card">
+            <span>Avg Food Delivery</span>
+            <strong>1m 40s</strong>
+            <small>From Ready to Served</small>
+          </article>
+          <article className="perf-card">
+            <span>Avg Water Response</span>
+            <strong>35s</strong>
+            <small>Response time</small>
+          </article>
+          <article className="perf-card">
+            <span>Avg Bill Response</span>
+            <strong>52s</strong>
+            <small>Response time</small>
+          </article>
+        </div>
+      )}
     </div>
   );
 }
@@ -1546,6 +1760,29 @@ function TableDetailsDrawer({
         </header>
 
         <div className="drawer-body">
+          {/* Service Timeline Progression */}
+          <section className="drawer-section">
+            <h3>Service Timeline</h3>
+            <div className="drawer-timeline-flow">
+              <div className="flow-step done">
+                <span>Kitchen</span>
+                <strong>✓ Ready</strong>
+              </div>
+              <div className="flow-step done">
+                <span>Waiter</span>
+                <strong>✓ Assigned</strong>
+              </div>
+              <div className="flow-step done">
+                <span>Food</span>
+                <strong>✓ Served</strong>
+              </div>
+              <div className="flow-step done">
+                <span>Customer</span>
+                <strong>Dining</strong>
+              </div>
+            </div>
+          </section>
+
           {/* Active Orders */}
           <section className="drawer-section">
             <h3>Active Orders</h3>

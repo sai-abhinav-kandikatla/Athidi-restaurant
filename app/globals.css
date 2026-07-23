@@ -781,3 +781,51 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .drawer-order-item__head { display: flex; justify-content: space-between; margin-bottom: 6px; font-weight: 700; }
 .drawer-order-line { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 4px; }
 
+/* ═══════════════ Phase 4 — Waiter Workspace ═══════════════ */
+.waiter-tabs { display: flex; gap: 8px; margin-bottom: 20px; background: white; padding: 8px; border-radius: 12px; border: 1.5px solid var(--line); flex-wrap: wrap; }
+.waiter-tabs button { border: 0; background: transparent; padding: 10px 18px; font-size: 13px; font-weight: 700; color: var(--muted); border-radius: 8px; transition: all .2s; }
+.waiter-tabs button.active { background: var(--maroon); color: white; box-shadow: 0 4px 14px rgba(139,11,11,.2); }
+
+.waiter-feed { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.waiter-food-card { background: white; border: 2px solid var(--green); border-radius: 14px; padding: 18px; box-shadow: 0 6px 20px rgba(33,122,70,.08); display: flex; flex-direction: column; gap: 12px; }
+.waiter-food-card__head { display: flex; justify-content: space-between; align-items: flex-start; }
+.waiter-food-card__head strong { font: 600 20px var(--font-playfair), Georgia, serif; color: var(--maroon); display: block; }
+.waiter-food-card__head small { color: var(--muted); font-size: 12px; }
+.waiter-food-card__items { background: var(--cream); padding: 12px; border-radius: 8px; display: grid; gap: 4px; font-size: 13px; font-weight: 600; }
+
+.waiter-food-card__actions { display: flex; gap: 10px; margin-top: auto; }
+.assign-btn { flex: 1; border: 1.5px solid var(--line); background: white; color: var(--ink); padding: 10px; font-size: 12px; font-weight: 700; border-radius: 8px; }
+.serve-btn { flex: 1.4; border: 0; background: var(--green); color: white; padding: 10px; font-size: 13px; font-weight: 800; border-radius: 8px; transition: background .2s; }
+.serve-btn:hover { background: #1a6438; }
+
+.waiter-request-card { background: white; border: 2px solid #8e44ad; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+.waiter-request-card__head { display: flex; justify-content: space-between; align-items: center; }
+.waiter-request-card__head strong { font: 600 20px var(--font-playfair), Georgia, serif; }
+.req-type-pill { background: #f4ecf7; color: #8e44ad; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 800; }
+
+.waiter-task-card { background: white; border: 1.5px solid var(--line); border-radius: 12px; padding: 16px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.priority-badge { background: var(--gold); color: var(--maroon-dark); font-size: 11px; font-weight: 900; padding: 4px 10px; border-radius: 6px; flex: none; }
+
+.waiter-performance-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+.perf-card { background: white; border: 1.5px solid var(--line); padding: 20px; border-radius: 14px; display: flex; flex-direction: column; gap: 6px; }
+.perf-card span { font-size: 11px; color: var(--muted); text-transform: uppercase; font-weight: 700; }
+.perf-card strong { font: 600 32px var(--font-playfair), Georgia, serif; color: var(--maroon); }
+.perf-card small { color: var(--green); font-size: 11px; font-weight: 600; }
+
+/* Confirmation Modal */
+.admin-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 200; display: grid; place-items: center; padding: 20px; }
+.admin-modal { width: min(440px, 100%); background: white; border-radius: 18px; padding: 28px; box-shadow: 0 20px 60px rgba(0,0,0,.3); text-align: center; }
+.admin-modal h3 { font: 600 22px var(--font-playfair), Georgia, serif; color: var(--maroon); margin: 0 0 10px; }
+.admin-modal p { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+.modal-items-list { background: var(--cream); padding: 14px; border-radius: 10px; text-align: left; margin-bottom: 20px; display: grid; gap: 6px; font-size: 13px; }
+.modal-actions { display: flex; gap: 12px; }
+.modal-actions button { flex: 1; height: 46px; border-radius: 10px; font-size: 14px; font-weight: 800; border: 0; }
+.modal-actions button.secondary { background: var(--cream-deep); color: var(--ink); }
+.modal-actions button.primary { background: var(--green); color: white; }
+
+/* Drawer timeline flow */
+.drawer-timeline-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; background: var(--cream); padding: 10px; border-radius: 10px; margin-bottom: 16px; }
+.flow-step { text-align: center; font-size: 10px; color: var(--muted); }
+.flow-step strong { display: block; font-size: 11px; color: var(--green); }
+
+
