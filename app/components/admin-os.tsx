@@ -1,4 +1,3 @@
-/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import {
@@ -25,31 +24,34 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { apiRequest } from "../lib/api/client";
 import { formatCurrency, normalizeMenuItem } from "../lib/menu";
 import type {
   DiningTable,
   MenuCategory,
   MenuItem,
-  OrderItem,
   OrderStatus,
   Payment,
   RestaurantOrder,
   ServiceRequest,
   StaffIdentity,
 } from "../lib/restaurant-types";
-import { getBrowserSupabase } from "../lib/supabase/client";
 import { Brand } from "./brand";
+import { getBrowserSupabase } from "../lib/supabase/client";
 
 /* ─────────── Types ─────────── */
 
-type Section =
+export type AdminSection =
   | "Dashboard"
   | "Live Tables"
   | "Orders"
   | "Kitchen"
   | "Waiter"
   | "Settings";
+
+type Section = AdminSection;
 
 type ConnectionStatus = "connected" | "reconnecting" | "offline";
 
@@ -90,6 +92,20 @@ type OperationalData = {
   payments: Payment[];
   restaurant: RestaurantProfile | null;
   branch: BranchProfile | null;
+  health: SystemHealth;
+};
+
+type SystemHealth = {
+  authentication: "healthy" | "disabled";
+  database: "healthy" | "disabled";
+  realtime: "healthy" | "disabled";
+  notifications: "healthy" | "disabled";
+  connection: "healthy" | "disabled";
+};
+
+type OperationsResponse = Omit<OperationalData, "health"> & {
+  health: SystemHealth;
+  audit: { id: number; action: string; entity_type: string | null; entity_id: string | null; data: Record<string, unknown>; created_at: string }[];
 };
 
 const emptyData: OperationalData = {
@@ -101,6 +117,13 @@ const emptyData: OperationalData = {
   payments: [],
   restaurant: null,
   branch: null,
+  health: {
+    authentication: "disabled",
+    database: "disabled",
+    realtime: "disabled",
+    notifications: "disabled",
+    connection: "disabled",
+  },
 };
 
 const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
@@ -114,8 +137,9 @@ const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
 
 /* ─────────── Main AdminOS Component ─────────── */
 
-export function AdminOS({ staff }: { staff: StaffIdentity }) {
-  const [section, setSection] = useState<Section>("Dashboard");
+export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffIdentity; initialSection?: AdminSection }) {
+  const router = useRouter();
+  const [section, setSection] = useState<Section>(initialSection);
   const [data, setData] = useState<OperationalData>(emptyData);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -131,11 +155,22 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
   const [serveConfirmOrder, setServeConfirmOrder] = useState<RestaurantOrder | null>(null);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
 
-  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tickerTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevOrderCount = useRef(0);
   const prevRequestCount = useRef(0);
+  const visibleNavItems = useMemo(() => {
+    if (staff.roleName === "CHEF") return navItems.filter((item) => item.label === "Kitchen");
+    if (staff.roleName === "WAITER") return navItems.filter((item) => item.label === "Waiter");
+    if (staff.roleName === "CASHIER") return [];
+    return navItems;
+  }, [staff.roleName]);
+
+  function navigateSection(next: Section) {
+    setSection(next);
+    const slug = next.toLowerCase().replaceAll(" ", "-");
+    router.push(`/admin/${slug}`);
+  }
 
   /* ─── Web Audio Chime Helper ─── */
   const playChime = useCallback(
@@ -173,261 +208,82 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
   /* ─── Data Loader ─── */
   const loadData = useCallback(
     async (quiet = false) => {
-      const supabase = getBrowserSupabase();
-      if (!supabase) {
-        setError("Supabase connection is unconfigured.");
-        setLoading(false);
-        setConnection("offline");
-        return;
-      }
-
       if (!quiet) setLoading(true);
-
       try {
-        const [
-          orderResult,
-          itemResult,
-          sessionResult,
-          tableResult,
-          requestResult,
-          categoryResult,
-          menuResult,
-          paymentResult,
-          restaurantResult,
-          branchResult,
-        ] = await Promise.all([
-          supabase
-            .from("orders")
-            .select("id,order_number,branch_id,table_session_id,status,subtotal,parcel_charge,tax,total,notes,spice_level,placed_at,served_at,paid_at")
-            .eq("branch_id", staff.branchId)
-            .order("placed_at", { ascending: false })
-            .limit(500),
-          supabase.from("order_items").select("*"),
-          supabase.from("table_sessions").select("id,table_id,opened_at,state"),
-          supabase
-            .from("tables")
-            .select("id,branch_id,section_id,number,capacity,qr_token,state")
-            .eq("branch_id", staff.branchId)
-            .order("number"),
-          supabase
-            .from("notifications")
-            .select("*")
-            .eq("branch_id", staff.branchId)
-            .order("created_at", { ascending: false })
-            .limit(100),
-          supabase
-            .from("menu_categories")
-            .select("id,restaurant_id,name,slug,sort_order,active")
-            .eq("restaurant_id", staff.restaurantId)
-            .order("sort_order"),
-          supabase
-            .from("menu_items")
-            .select("id,restaurant_id,category_id,name,description,price,is_veg,available,bestseller,image_url,sort_order")
-            .eq("restaurant_id", staff.restaurantId)
-            .order("sort_order"),
-          supabase.from("payments").select("*").order("created_at", { ascending: false }),
-          supabase.from("restaurants").select("id,name,phone,whatsapp").eq("id", staff.restaurantId).single(),
-          supabase.from("branches").select("id,name,address,opens_at,closes_at,gstin,tax_rate,qr_ordering_enabled,parcel_charge_enabled,realtime_alerts_enabled").eq("id", staff.branchId).single(),
-        ]);
+        const payload = await apiRequest<OperationsResponse>("/api/v1/operations");
+        const orders = (payload.orders ?? []).map((order) => ({
+          ...order,
+          subtotal: Number(order.subtotal),
+          parcel_charge: Number(order.parcel_charge),
+          tax: Number(order.tax),
+          total: Number(order.total),
+          order_items: order.order_items?.map((item) => ({
+            ...item,
+            unit_price: Number(item.unit_price),
+            parcel_charge: Number(item.parcel_charge),
+            line_total: Number(item.line_total),
+          })),
+        }));
+        const requests = payload.requests ?? [];
 
-        const firstError = [
-          orderResult.error,
-          itemResult.error,
-          sessionResult.error,
-          tableResult.error,
-          requestResult.error,
-          categoryResult.error,
-          menuResult.error,
-          paymentResult.error,
-          restaurantResult.error,
-          branchResult.error,
-        ].find(Boolean);
-
-        if (firstError) {
-          setError(firstError.message);
-          setConnection("reconnecting");
-          setLoading(false);
-          return;
-        }
-
-        const tables = (tableResult.data ?? []) as DiningTable[];
-        const sessions = (sessionResult.data ?? []) as { id: string; table_id: string; opened_at: string; state: string }[];
-        const orderItems = (itemResult.data ?? []) as unknown as OrderItem[];
-        const sessionTable = new Map(sessions.map((s) => [s.id, s.table_id]));
-        const sessionMap = new Map(sessions.map((s) => [s.id, s]));
-        const tablesById = new Map(tables.map((t) => [t.id, t]));
-
-        const orders = ((orderResult.data ?? []) as unknown as RestaurantOrder[]).map((order) => {
-          const tId = sessionTable.get(order.table_session_id);
-          const table = tablesById.get(tId ?? "");
-          return {
-            ...order,
-            subtotal: Number(order.subtotal),
-            parcel_charge: Number(order.parcel_charge),
-            tax: Number(order.tax),
-            total: Number(order.total),
-            order_items: orderItems
-              .filter((item) => item.order_id === order.id)
-              .map((item) => ({
-                ...item,
-                unit_price: Number(item.unit_price),
-                parcel_charge: Number(item.parcel_charge),
-                line_total: Number(item.line_total),
-              })),
-            table_session: {
-              id: order.table_session_id,
-              opened_at: sessionMap.get(order.table_session_id)?.opened_at,
-              table: table ? { id: table.id, number: table.number } : null,
-            },
-          };
-        });
-
-        const requests = ((requestResult.data ?? []) as unknown as ServiceRequest[]).map((req) => {
-          const table = tablesById.get(sessionTable.get(req.table_session_id) ?? "");
-          return {
-            ...req,
-            table_session: {
-              table: table ? { id: table.id, number: table.number } : null,
-            },
-          };
-        });
-
-        // Trigger sound chimes if new items arrived
-        if (orders.length > prevOrderCount.current && prevOrderCount.current > 0) {
-          playChime(880, 0.3); // New Order chime
-        }
-        if (requests.length > prevRequestCount.current && prevRequestCount.current > 0) {
-          playChime(660, 0.3); // Service Request chime
-        }
+        if (orders.length > prevOrderCount.current && prevOrderCount.current > 0) playChime(880, 0.3);
+        if (requests.length > prevRequestCount.current && prevRequestCount.current > 0) playChime(660, 0.3);
         prevOrderCount.current = orders.length;
         prevRequestCount.current = requests.length;
 
-        // Build Activity Log
-        const logs: ActivityLogItem[] = [];
-        orders.slice(0, 15).forEach((o) => {
-          const tNum = o.table_session?.table?.number ?? "?";
-          const timeStr = formatTime(o.placed_at);
-          logs.push({
-            id: `ord-${o.id}`,
-            time: timeStr,
-            type: "order",
-            icon: "🟥",
-            message: `Table ${tNum} placed Order #AT-${o.order_number} (${formatCurrency(o.total)})`,
-          });
-          if (o.status === "ACCEPTED" || o.status === "PREPARING") {
-            logs.push({
-              id: `prep-${o.id}`,
-              time: timeStr,
-              type: "kitchen",
-              icon: "👨‍🍳",
-              message: `Kitchen is preparing Order #AT-${o.order_number} for Table ${tNum}`,
-            });
-          }
-          if (o.status === "READY") {
-            logs.push({
-              id: `rdy-${o.id}`,
-              time: timeStr,
-              type: "kitchen",
-              icon: "🟢",
-              message: `Order #AT-${o.order_number} for Table ${tNum} is Ready to serve!`,
-            });
-          }
-          if (o.status === "SERVED") {
-            logs.push({
-              id: `srv-${o.id}`,
-              time: timeStr,
-              type: "order",
-              icon: "✓",
-              message: `Food served for Order #AT-${o.order_number} at Table ${tNum}`,
-            });
-          }
-        });
-        requests.slice(0, 15).forEach((r) => {
-          const tNum = r.table_session?.table?.number ?? "?";
-          const icon = r.request_type === "WAITER" ? "🟣" : r.request_type === "BILL" ? "🧾" : "🔵";
-          logs.push({
-            id: `req-${r.id}`,
-            time: formatTime(r.created_at),
-            type: "request",
-            icon,
-            message: `Table ${tNum} requested ${r.request_type.toLowerCase()}`,
-          });
-        });
-        setActivityLogs(logs.sort((a, b) => b.id.localeCompare(a.id)).slice(0, 25));
-
-        const categories = (categoryResult.data ?? []) as MenuCategory[];
-        const categoryMap = new Map(categories.map((c) => [c.id, c]));
-        const menu = ((menuResult.data ?? []) as unknown as MenuItem[]).map((item) =>
-          normalizeMenuItem({
-            ...item,
-            category: categoryMap.get(item.category_id) ?? null,
-          }),
+        const categories = payload.categories ?? [];
+        const categoryMap = new Map(categories.map((category) => [category.id, category]));
+        const menu = (payload.menu ?? []).map((item) =>
+          normalizeMenuItem({ ...item, category: item.category ?? categoryMap.get(item.category_id) ?? null }),
         );
-        const branchProfile = branchResult.data as BranchProfile;
-
+        const branch = payload.branch
+          ? { ...payload.branch, tax_rate: Number(payload.branch.tax_rate) }
+          : null;
+        const payments = (payload.payments ?? []).map((payment) => ({
+          ...payment,
+          amount: Number(payment.amount),
+        }));
         setData({
           orders,
           requests,
-          tables,
+          tables: payload.tables ?? [],
           categories,
           menu,
-          payments: ((paymentResult.data ?? []) as unknown as Payment[]).map((p) => ({
-            ...p,
-            amount: Number(p.amount),
-          })),
-          restaurant: restaurantResult.data as RestaurantProfile,
-          branch: { ...branchProfile, tax_rate: Number(branchProfile.tax_rate) },
+          payments,
+          restaurant: payload.restaurant,
+          branch,
+          health: payload.health,
         });
 
+        setActivityLogs((payload.audit ?? []).map((entry) => ({
+          id: `audit-${entry.id}`,
+          time: formatTime(entry.created_at),
+          type: "system",
+          icon: "⚡",
+          message: `${entry.action.replaceAll("_", " ")}`,
+        })));
         setError(null);
-        setConnection("connected");
-        setLoading(false);
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Failed to load data.");
+        setConnection(payload.health.connection === "healthy" ? "connected" : "reconnecting");
+      } catch (problem) {
+        setError(problem instanceof Error ? problem.message : "The operations workspace could not be loaded.");
         setConnection("offline");
+      } finally {
         setLoading(false);
       }
     },
-    [staff.branchId, staff.restaurantId, playChime],
+    [playChime],
   );
 
-  /* ─── Initial Load & Realtime Subscription ─── */
   useEffect(() => {
     queueMicrotask(() => void loadData());
   }, [loadData]);
 
   useEffect(() => {
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
-
-    const scheduleReload = () => {
-      if (reloadTimer.current) clearTimeout(reloadTimer.current);
-      reloadTimer.current = setTimeout(() => void loadData(true), 180);
-    };
-
-    const channel = supabase
-      .channel(`admin-ros-${staff.branchId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `branch_id=eq.${staff.branchId}` }, scheduleReload)
-      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, scheduleReload)
-      .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `branch_id=eq.${staff.branchId}` }, scheduleReload)
-      .on("postgres_changes", { event: "*", schema: "public", table: "tables", filter: `branch_id=eq.${staff.branchId}` }, scheduleReload)
-      .on("postgres_changes", { event: "*", schema: "public", table: "table_sessions" }, scheduleReload)
-      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, scheduleReload)
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") setConnection("connected");
-        else if (status === "CLOSED" || status === "CHANNEL_ERROR") setConnection("reconnecting");
-      });
-
-    pollTimer.current = setInterval(() => {
-      void loadData(true);
-    }, 30_000);
-
+    pollTimer.current = setInterval(() => void loadData(true), 5_000);
     return () => {
-      if (reloadTimer.current) clearTimeout(reloadTimer.current);
       if (pollTimer.current) clearInterval(pollTimer.current);
-      void supabase.removeChannel(channel);
     };
-  }, [loadData, staff.branchId]);
+  }, [loadData]);
 
   /* ─── Toast Dismiss ─── */
   useEffect(() => {
@@ -499,39 +355,36 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
 
   /* ─── Advance Order Status ─── */
   async function advanceOrder(order: RestaurantOrder) {
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
-    const sequence: OrderStatus[] = ["PLACED", "PREPARING", "READY", "SERVED", "BILLED"];
-    const currIndex = sequence.indexOf(order.status === "ACCEPTED" ? "PREPARING" : order.status);
+    const sequence: OrderStatus[] = ["PLACED", "ACCEPTED", "PREPARING", "READY", "SERVED", "BILLED"];
+    const currIndex = sequence.indexOf(order.status);
     const next = sequence[currIndex + 1];
     if (!next) return;
 
     await mutate(async () => {
-      const res = await supabase.rpc("advance_order_status", {
-        p_order_id: order.id,
-        p_status: next,
-      });
-      if (!res.error && order.table_session?.table?.id) {
-        // Automatically set table state to DINING when food is served
-        await supabase
-          .from("tables")
-          .update({ state: "DINING" })
-          .eq("id", order.table_session.table.id);
+      try {
+        await apiRequest(`/api/v1/orders/${order.id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: next }),
+        });
+        return { error: null };
+      } catch (problem) {
+        return { error: { message: problem instanceof Error ? problem.message : "The order could not be updated." } };
       }
-      return { error: res.error };
     }, `Order #AT-${order.order_number} is now ${statusLabel(next).toLowerCase()}.`);
   }
 
   /* ─── Resolve Service Request ─── */
   async function resolveRequest(req: ServiceRequest) {
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
     await mutate(async () => {
-      const res = await supabase
-        .from("notifications")
-        .update({ status: "RESOLVED", resolved_at: new Date().toISOString() })
-        .eq("id", req.id);
-      return { error: res.error };
+      try {
+        await apiRequest(`/api/v1/service-requests/${req.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "RESOLVED" }),
+        });
+        return { error: null };
+      } catch (problem) {
+        return { error: { message: problem instanceof Error ? problem.message : "The request could not be resolved." } };
+      }
     }, `${req.request_type.toLowerCase()} request for Table ${req.table_session?.table?.number ?? ""} resolved.`);
   }
 
@@ -546,10 +399,11 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
 
   /* ─── Sign Out ─── */
   async function signOut() {
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
-    await supabase.auth.signOut();
-    window.location.assign("/admin/login");
+    try {
+      await apiRequest("/api/v1/auth/session", { method: "DELETE" });
+    } finally {
+      window.location.assign("/admin/login");
+    }
   }
 
   /* ─── Selected Table Context ─── */
@@ -577,10 +431,10 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
         </div>
 
         <nav aria-label="ROS navigation">
-          {navItems.map(({ label, icon: Icon }) => (
+          {visibleNavItems.map(({ label, icon: Icon }) => (
             <button
               key={label}
-              onClick={() => setSection(label)}
+              onClick={() => navigateSection(label)}
               className={section === label ? "active" : ""}
             >
               <Icon size={19} />
@@ -718,7 +572,7 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
                   kitchenTimes={kitchenTimes}
                   activityLogs={activityLogs}
                   search={search}
-                  onSection={setSection}
+                  onSection={navigateSection}
                   onSelectTable={(id) => setSelectedTableId(id)}
                 />
               )}
@@ -771,6 +625,8 @@ export function AdminOS({ staff }: { staff: StaffIdentity }) {
                   soundEnabled={soundEnabled}
                   setSoundEnabled={setSoundEnabled}
                   mutate={mutate}
+                  roleName={staff.roleName}
+                  health={data.health}
                 />
               )}
             </>
@@ -938,6 +794,15 @@ function DashboardWorkspace({
             <strong>Active Kitchen Orders:</strong> {activeOrders}
           </span>
         </div>
+      </div>
+
+      <div className="admin-stats-strip" aria-label="System health">
+        {Object.entries(data.health).map(([name, status]) => (
+          <div key={name}>
+            <CheckCircle2 size={17} style={{ color: status === "healthy" ? "#2f8f46" : "#c47b20" }} />
+            <span><strong>{name.charAt(0).toUpperCase() + name.slice(1)}:</strong> {status}</span>
+          </div>
+        ))}
       </div>
 
       {/* KPI Cards */}
@@ -1602,12 +1467,16 @@ function SettingsWorkspace({
   soundEnabled,
   setSoundEnabled,
   mutate,
+  roleName,
+  health,
 }: {
   restaurant: RestaurantProfile;
   branch: BranchProfile;
   soundEnabled: boolean;
   setSoundEnabled: (b: boolean) => void;
   mutate: (work: () => Promise<{ error: { message: string } | null }>, successMsg: string) => Promise<boolean>;
+  roleName: string;
+  health: SystemHealth;
 }) {
   const [tab, setTab] = useState<"restaurant" | "billing" | "kitchen" | "notifications" | "system">("restaurant");
   const [form, setForm] = useState(() => ({
@@ -1620,20 +1489,32 @@ function SettingsWorkspace({
     qrEnabled: branch.qr_ordering_enabled,
     parcelEnabled: branch.parcel_charge_enabled,
   }));
+  const isOwner = roleName === "OWNER";
 
   async function save() {
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
     await mutate(async () => {
-      const res = await supabase.from("branches").update({
-        name: form.name,
-        address: form.address,
-        gstin: form.gstin,
-        tax_rate: form.taxRate,
-        qr_ordering_enabled: form.qrEnabled,
-        parcel_charge_enabled: form.parcelEnabled,
-      }).eq("id", branch.id);
-      return { error: res.error };
+      try {
+        await apiRequest("/api/v1/restaurant", {
+          method: "PATCH",
+          body: JSON.stringify({
+            address: form.address,
+            qrOrderingEnabled: form.qrEnabled,
+            parcelChargeEnabled: form.parcelEnabled,
+            ...(isOwner
+              ? {
+                  name: form.name,
+                  phone: form.phone,
+                  whatsapp: form.whatsapp,
+                  gstin: form.gstin,
+                  taxRate: form.taxRate,
+                }
+              : {}),
+          }),
+        });
+        return { error: null };
+      } catch (problem) {
+        return { error: { message: problem instanceof Error ? problem.message : "Settings could not be updated." } };
+      }
     }, "Settings updated.");
   }
 
@@ -1650,7 +1531,7 @@ function SettingsWorkspace({
       </div>
 
       <div className="settings-tab-bar">
-        {(["restaurant", "billing", "kitchen", "notifications", "system"] as const).map((t) => (
+        {(["restaurant", ...(isOwner ? ["billing" as const] : []), "kitchen", "notifications", "system"] as const).map((t) => (
           <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
             {t.toUpperCase()}
           </button>
@@ -1661,13 +1542,14 @@ function SettingsWorkspace({
         {tab === "restaurant" && (
           <section className="admin-card settings-form">
             <h2>Restaurant Profile</h2>
+            {!isOwner && <p>Managers can update branch operations. Restaurant identity and tax settings are owner-only.</p>}
             <label>
               Restaurant Name
-              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <input value={form.name} disabled={!isOwner} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </label>
             <label>
               Phone Number
-              <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+              <input value={form.phone} disabled={!isOwner} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
             </label>
             <label>
               Address
@@ -1722,8 +1604,12 @@ function SettingsWorkspace({
           <section className="admin-card settings-form">
             <h2>System Health</h2>
             <div className="system-health-list">
-              <div><span>Realtime WebSocket</span><strong>🟢 Connected</strong></div>
-              <div><span>Database Service</span><strong>🟢 Operational</strong></div>
+              {Object.entries(health).map(([name, status]) => (
+                <div key={name}>
+                  <span>{name.charAt(0).toUpperCase() + name.slice(1)}</span>
+                  <strong>{status === "healthy" ? "🟢 Healthy" : "🟠 Disabled"}</strong>
+                </div>
+              ))}
               <div><span>Timezone</span><strong>Asia/Kolkata</strong></div>
             </div>
           </section>
@@ -1843,6 +1729,30 @@ function formatTime(iso: string) {
   } catch {
     return "";
   }
+}
+
+function auditType(action: string): ActivityLogItem["type"] {
+  if (action.includes("ORDER") || action === "FOOD_SERVED" || action.includes("PAYMENT")) return "order";
+  if (action.includes("REQUEST")) return "request";
+  if (action.includes("SESSION")) return "session";
+  if (action.includes("READY") || action.includes("PREPAR")) return "kitchen";
+  return "system";
+}
+
+function auditIcon(action: string) {
+  if (action === "ORDER_READY") return "🟢";
+  if (action === "FOOD_SERVED") return "✓";
+  if (action.includes("REQUEST")) return "🔔";
+  if (action.includes("LOGIN")) return "🔐";
+  if (action.includes("SETTINGS")) return "⚙️";
+  if (action.includes("PAYMENT")) return "₹";
+  return "•";
+}
+
+function auditMessage(action: string, metadata: Record<string, unknown>) {
+  const label = action.toLowerCase().replaceAll("_", " ");
+  const status = typeof metadata.status === "string" ? ` · ${metadata.status.toLowerCase()}` : "";
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)}${status}`;
 }
 
 function formatLiveClock(timestamp: number) {
