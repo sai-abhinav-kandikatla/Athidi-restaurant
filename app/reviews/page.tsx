@@ -1,3 +1,24 @@
+import Link from "next/link";
 import { PublicPage } from "../components/public-page";
-const reviews = [["Ananya R.", "The biryani has that slow-cooked aroma you notice before it reaches the table. Warm service and genuinely comfortable for the whole family."], ["Rohan K.", "Thoughtful service, excellent starters and a menu with something for every age. We will be back."], ["Meera S.", "The paneer was beautifully charred and the dining room felt calm even during a busy evening."]];
-export default function ReviewsPage() { return <PublicPage eyebrow="Guest book" title="Kind words, shared warmly." intro="What our guests remember after the last plate is cleared."><div className="public-reviews">{reviews.map(([name, text]) => <blockquote key={name}><span>★★★★★</span><p>“{text}”</p><footer>{name}</footer></blockquote>)}</div></PublicPage>; }
+
+export default function ReviewsPage() {
+  return (
+    <PublicPage
+      eyebrow="Our promise"
+      title="Hospitality you can feel."
+      intro="We do not publish invented ratings or guest quotes. Athidhi’s promise is simple: fresh food, thoughtful service and a table where families feel at home."
+    >
+      <div className="public-prose">
+        <h2>Share your experience directly</h2>
+        <p>
+          If something made your visit special—or if there is something we can
+          improve—please tell the restaurant team. Every note is handled by a
+          real person.
+        </p>
+        <Link href="/contact" className="button button--maroon">
+          Contact Athidhi
+        </Link>
+      </div>
+    </PublicPage>
+  );
+}

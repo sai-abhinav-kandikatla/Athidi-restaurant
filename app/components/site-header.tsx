@@ -11,7 +11,7 @@ export function SiteHeader({ cartCount = 0, onCart }: { cartCount?: number; onCa
     ["Our story", "/#story"],
     ["Menu", "/menu"],
     ["Gallery", "/#gallery"],
-    ["Reviews", "/#reviews"],
+    ["Our promise", "/#reviews"],
     ["Visit", "/#visit"],
   ];
   return (
@@ -20,7 +20,7 @@ export function SiteHeader({ cartCount = 0, onCart }: { cartCount?: number; onCa
         <Brand compact />
         <nav className={`site-nav ${open ? "is-open" : ""}`} aria-label="Main navigation">
           {links.map(([label, href]) => <Link href={href} key={href} onClick={() => setOpen(false)}>{label}</Link>)}
-          <Link href="/table/8" className="nav-cta" onClick={() => setOpen(false)}>Order at table</Link>
+          <Link href="/menu" className="nav-cta" onClick={() => setOpen(false)}>View live menu</Link>
         </nav>
         <div className="header-actions">
           {onCart && (

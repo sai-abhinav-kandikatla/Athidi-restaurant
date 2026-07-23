@@ -22,9 +22,9 @@ export async function generateMetadata(): Promise<Metadata> {
       siteName: "Athidhi Family Restaurant",
       title: "Athidhi Family Restaurant",
       description: "Made with heart. Served like family.",
-      images: [{ url: "/og.png", width: 1732, height: 907, alt: "Athidhi Family Restaurant — made with heart, served like family" }],
+      images: [{ url: "/og-v2.png", width: 1734, height: 907, alt: "Athidhi Family Restaurant — made with heart, served like family" }],
     },
-    twitter: { card: "summary_large_image", title: "Athidhi Family Restaurant", description: "Made with heart. Served like family.", images: ["/og.png"] },
+    twitter: { card: "summary_large_image", title: "Athidhi Family Restaurant", description: "Made with heart. Served like family.", images: ["/og-v2.png"] },
   };
 }
 

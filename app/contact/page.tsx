@@ -1,2 +1,41 @@
 import { PublicPage } from "../components/public-page";
-export default function ContactPage() { return <PublicPage eyebrow="Talk to us" title="We’d love to hear from you." intro="For reservations, celebrations or anything else, reach the Athidhi team here."><div className="contact-cards"><article><span>PHONE</span><h2>Reservations & enquiries</h2><p>The official restaurant number is ready to be added from Settings.</p></article><article><span>WHATSAPP</span><h2>Quick messages</h2><p>The restaurant WhatsApp number is ready to be connected.</p></article><article><span>VISIT</span><h2>Find Athidhi</h2><p>The complete restaurant address is ready to be published.</p></article></div></PublicPage>; }
+import { getPublicRestaurantData } from "../lib/supabase/public-data";
+
+export const dynamic = "force-dynamic";
+
+export default async function ContactPage() {
+  const data = await getPublicRestaurantData();
+  return (
+    <PublicPage
+      eyebrow="Talk to us"
+      title="We’d love to hear from you."
+      intro="For reservations, celebrations or anything else, reach the Athidhi team here."
+    >
+      <div className="contact-cards">
+        {data.restaurant?.phone && (
+          <article>
+            <span>PHONE</span>
+            <h2>Reservations & enquiries</h2>
+            <a href={`tel:${data.restaurant.phone.replace(/[^\d+]/g, "")}`}>
+              {data.restaurant.phone}
+            </a>
+          </article>
+        )}
+        {data.restaurant?.whatsapp && (
+          <article>
+            <span>WHATSAPP</span>
+            <h2>Quick messages</h2>
+            <a href={`https://wa.me/${data.restaurant.whatsapp.replace(/\D/g, "")}`}>
+              Message Athidhi
+            </a>
+          </article>
+        )}
+        <article>
+          <span>VISIT</span>
+          <h2>{data.branch?.name ?? "Athidhi Family Restaurant"}</h2>
+          <p>{data.branch?.address ?? "Contact us for directions."}</p>
+        </article>
+      </div>
+    </PublicPage>
+  );
+}

@@ -1,137 +1,1628 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { Activity, BarChart3, BellRing, ChefHat, ChevronRight, CircleDollarSign, Clock3, CreditCard, LayoutDashboard, LogOut, MenuSquare, MoreHorizontal, Printer, ReceiptIndianRupee, Search, Settings, Sparkles, Store, Table2, WalletCards } from "lucide-react";
-import { useMemo, useState } from "react";
-import { menuItems } from "../lib/menu";
-import { Brand, FoodMark } from "./brand";
+import {
+  Activity,
+  AlertTriangle,
+  BellRing,
+  CheckCircle2,
+  ChefHat,
+  ChevronRight,
+  CircleDollarSign,
+  Clock,
+  Flame,
+  LayoutDashboard,
+  LoaderCircle,
+  LogOut,
+  RefreshCw,
+  Search,
+  Settings,
+  ShoppingBag,
+  Store,
+  Table2,
+  Volume2,
+  VolumeX,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { formatCurrency, normalizeMenuItem } from "../lib/menu";
+import type {
+  DiningTable,
+  MenuCategory,
+  MenuItem,
+  OrderItem,
+  OrderStatus,
+  Payment,
+  RestaurantOrder,
+  ServiceRequest,
+  StaffIdentity,
+} from "../lib/restaurant-types";
+import { getBrowserSupabase } from "../lib/supabase/client";
+import { Brand } from "./brand";
 
-type Section = "Overview" | "Kitchen" | "Waiter" | "Checkout" | "Tables" | "Menu" | "Analytics" | "Settings";
-type KitchenStatus = "New" | "Preparing" | "Ready" | "Completed";
-type KitchenOrder = { id: string; table: number; minutes: number; status: KitchenStatus; items: string[]; priority?: boolean };
+/* ─────────── Types ─────────── */
 
-const nav: { label: Section; icon: typeof LayoutDashboard }[] = [
-  { label: "Overview", icon: LayoutDashboard }, { label: "Kitchen", icon: ChefHat }, { label: "Waiter", icon: BellRing }, { label: "Checkout", icon: CreditCard }, { label: "Tables", icon: Table2 }, { label: "Menu", icon: MenuSquare }, { label: "Analytics", icon: BarChart3 }, { label: "Settings", icon: Settings },
+type Section =
+  | "Dashboard"
+  | "Live Tables"
+  | "Orders"
+  | "Kitchen"
+  | "Service Requests"
+  | "Settings";
+
+type ConnectionStatus = "connected" | "reconnecting" | "offline";
+
+type ActivityLogItem = {
+  id: string;
+  time: string;
+  type: "order" | "request" | "kitchen" | "session" | "system";
+  icon: string;
+  message: string;
+};
+
+type RestaurantProfile = {
+  id: string;
+  name: string;
+  phone: string | null;
+  whatsapp: string | null;
+};
+
+type BranchProfile = {
+  id: string;
+  name: string;
+  address: string | null;
+  opens_at: string | null;
+  closes_at: string | null;
+  gstin: string | null;
+  tax_rate: number;
+  qr_ordering_enabled: boolean;
+  parcel_charge_enabled: boolean;
+  realtime_alerts_enabled: boolean;
+};
+
+type OperationalData = {
+  orders: RestaurantOrder[];
+  requests: ServiceRequest[];
+  tables: DiningTable[];
+  categories: MenuCategory[];
+  menu: MenuItem[];
+  payments: Payment[];
+  restaurant: RestaurantProfile | null;
+  branch: BranchProfile | null;
+};
+
+const emptyData: OperationalData = {
+  orders: [],
+  requests: [],
+  tables: [],
+  categories: [],
+  menu: [],
+  payments: [],
+  restaurant: null,
+  branch: null,
+};
+
+const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
+  { label: "Dashboard", icon: LayoutDashboard },
+  { label: "Live Tables", icon: Table2 },
+  { label: "Orders", icon: ShoppingBag },
+  { label: "Kitchen", icon: ChefHat },
+  { label: "Service Requests", icon: BellRing },
+  { label: "Settings", icon: Settings },
 ];
 
-const initialOrders: KitchenOrder[] = [
-  { id: "AT-1048", table: 8, minutes: 3, status: "New", items: ["2× Chicken Dum Biryani", "1× Paneer Tikka"], priority: true },
-  { id: "AT-1047", table: 3, minutes: 7, status: "New", items: ["1× Veg Dum Biryani", "2× Butter Naan"] },
-  { id: "AT-1045", table: 11, minutes: 14, status: "Preparing", items: ["1× Andhra Chicken Curry", "2× Butter Naan"] },
-  { id: "AT-1044", table: 5, minutes: 18, status: "Preparing", items: ["2× Chicken 65", "1× Chicken Fried Rice"], priority: true },
-  { id: "AT-1042", table: 2, minutes: 22, status: "Ready", items: ["1× Paneer Butter Masala", "3× Butter Naan"] },
-  { id: "AT-1040", table: 9, minutes: 31, status: "Completed", items: ["1× Mutton Dum Biryani"] },
-];
+/* ─────────── Main AdminOS Component ─────────── */
 
-const requests = [
-  { id: 1, table: 12, type: "Bill", time: "1 min", priority: "urgent" },
-  { id: 2, table: 8, type: "Waiter", time: "2 min", priority: "high" },
-  { id: 3, table: 4, type: "Water", time: "4 min", priority: "normal" },
-  { id: 4, table: 7, type: "Spoon", time: "6 min", priority: "normal" },
-];
-type ServiceRequest = (typeof requests)[number];
+export function AdminOS({ staff }: { staff: StaffIdentity }) {
+  const [section, setSection] = useState<Section>("Dashboard");
+  const [data, setData] = useState<OperationalData>(emptyData);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [connection, setConnection] = useState<ConnectionStatus>("connected");
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [nowTime, setNowTime] = useState(() => Date.now());
+  const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
+  const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifFilter, setNotifFilter] = useState<string>("all");
 
-export function AdminOS() {
-  const [section, setSection] = useState<Section>("Overview");
-  const [orders, setOrders] = useState<KitchenOrder[]>(initialOrders);
-  const [openRequests, setOpenRequests] = useState(requests);
-  const [available, setAvailable] = useState(() => Object.fromEntries(menuItems.map((item) => [item.id, true])) as Record<number, boolean>);
-  const [selectedBill, setSelectedBill] = useState(8);
-  const [payment, setPayment] = useState("UPI");
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tickerTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevOrderCount = useRef(0);
+  const prevRequestCount = useRef(0);
 
-  const revenue = 84260;
-  const activeOrders = orders.filter((order) => order.status !== "Completed").length;
+  /* ─── Web Audio Chime Helper ─── */
+  const playChime = useCallback(
+    (freq = 880, duration = 0.25) => {
+      if (!soundEnabled || typeof window === "undefined") return;
+      try {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + duration);
+      } catch { /* ignore audio play restrictions */ }
+    },
+    [soundEnabled],
+  );
 
-  function advanceOrder(id: string) {
-    const statuses: KitchenStatus[] = ["New", "Preparing", "Ready", "Completed"];
-    setOrders((current) => current.map((order) => order.id === id ? { ...order, status: statuses[Math.min(statuses.length - 1, statuses.indexOf(order.status) + 1)] } : order));
+  /* ─── 1-Second Ticker for Elapsed Timers & Clock ─── */
+  useEffect(() => {
+    tickerTimer.current = setInterval(() => {
+      setNowTime(Date.now());
+    }, 1000);
+    return () => {
+      if (tickerTimer.current) clearInterval(tickerTimer.current);
+    };
+  }, []);
+
+  /* ─── Data Loader ─── */
+  const loadData = useCallback(
+    async (quiet = false) => {
+      const supabase = getBrowserSupabase();
+      if (!supabase) {
+        setError("Supabase connection is unconfigured.");
+        setLoading(false);
+        setConnection("offline");
+        return;
+      }
+
+      if (quiet) setRefreshing(true);
+      else setLoading(true);
+
+      try {
+        const [
+          orderResult,
+          itemResult,
+          sessionResult,
+          tableResult,
+          requestResult,
+          categoryResult,
+          menuResult,
+          paymentResult,
+          restaurantResult,
+          branchResult,
+        ] = await Promise.all([
+          supabase
+            .from("orders")
+            .select("id,order_number,branch_id,table_session_id,status,subtotal,parcel_charge,tax,total,notes,spice_level,placed_at,served_at,paid_at")
+            .eq("branch_id", staff.branchId)
+            .order("placed_at", { ascending: false })
+            .limit(500),
+          supabase.from("order_items").select("*"),
+          supabase.from("table_sessions").select("id,table_id,opened_at,state"),
+          supabase
+            .from("tables")
+            .select("id,branch_id,section_id,number,capacity,qr_token,state")
+            .eq("branch_id", staff.branchId)
+            .order("number"),
+          supabase
+            .from("notifications")
+            .select("*")
+            .eq("branch_id", staff.branchId)
+            .order("created_at", { ascending: false })
+            .limit(100),
+          supabase
+            .from("menu_categories")
+            .select("id,restaurant_id,name,slug,sort_order,active")
+            .eq("restaurant_id", staff.restaurantId)
+            .order("sort_order"),
+          supabase
+            .from("menu_items")
+            .select("id,restaurant_id,category_id,name,description,price,is_veg,available,bestseller,image_url,sort_order")
+            .eq("restaurant_id", staff.restaurantId)
+            .order("sort_order"),
+          supabase.from("payments").select("*").order("created_at", { ascending: false }),
+          supabase.from("restaurants").select("id,name,phone,whatsapp").eq("id", staff.restaurantId).single(),
+          supabase.from("branches").select("id,name,address,opens_at,closes_at,gstin,tax_rate,qr_ordering_enabled,parcel_charge_enabled,realtime_alerts_enabled").eq("id", staff.branchId).single(),
+        ]);
+
+        const firstError = [
+          orderResult.error,
+          itemResult.error,
+          sessionResult.error,
+          tableResult.error,
+          requestResult.error,
+          categoryResult.error,
+          menuResult.error,
+          paymentResult.error,
+          restaurantResult.error,
+          branchResult.error,
+        ].find(Boolean);
+
+        if (firstError) {
+          setError(firstError.message);
+          setConnection("reconnecting");
+          setLoading(false);
+          setRefreshing(false);
+          return;
+        }
+
+        const tables = (tableResult.data ?? []) as DiningTable[];
+        const sessions = (sessionResult.data ?? []) as { id: string; table_id: string; opened_at: string; state: string }[];
+        const orderItems = (itemResult.data ?? []) as unknown as OrderItem[];
+        const sessionTable = new Map(sessions.map((s) => [s.id, s.table_id]));
+        const sessionMap = new Map(sessions.map((s) => [s.id, s]));
+        const tablesById = new Map(tables.map((t) => [t.id, t]));
+
+        const orders = ((orderResult.data ?? []) as unknown as RestaurantOrder[]).map((order) => {
+          const tId = sessionTable.get(order.table_session_id);
+          const table = tablesById.get(tId ?? "");
+          return {
+            ...order,
+            subtotal: Number(order.subtotal),
+            parcel_charge: Number(order.parcel_charge),
+            tax: Number(order.tax),
+            total: Number(order.total),
+            order_items: orderItems
+              .filter((item) => item.order_id === order.id)
+              .map((item) => ({
+                ...item,
+                unit_price: Number(item.unit_price),
+                parcel_charge: Number(item.parcel_charge),
+                line_total: Number(item.line_total),
+              })),
+            table_session: {
+              id: order.table_session_id,
+              opened_at: sessionMap.get(order.table_session_id)?.opened_at,
+              table: table ? { id: table.id, number: table.number } : null,
+            },
+          };
+        });
+
+        const requests = ((requestResult.data ?? []) as unknown as ServiceRequest[]).map((req) => {
+          const table = tablesById.get(sessionTable.get(req.table_session_id) ?? "");
+          return {
+            ...req,
+            table_session: {
+              table: table ? { id: table.id, number: table.number } : null,
+            },
+          };
+        });
+
+        // Trigger sound chimes if new items arrived
+        if (orders.length > prevOrderCount.current && prevOrderCount.current > 0) {
+          playChime(880, 0.3); // New Order chime
+        }
+        if (requests.length > prevRequestCount.current && prevRequestCount.current > 0) {
+          playChime(660, 0.3); // Service Request chime
+        }
+        prevOrderCount.current = orders.length;
+        prevRequestCount.current = requests.length;
+
+        // Build Activity Log
+        const logs: ActivityLogItem[] = [];
+        orders.slice(0, 15).forEach((o) => {
+          const tNum = o.table_session?.table?.number ?? "?";
+          const timeStr = formatTime(o.placed_at);
+          logs.push({
+            id: `ord-${o.id}`,
+            time: timeStr,
+            type: "order",
+            icon: "🟥",
+            message: `Table ${tNum} placed Order #AT-${o.order_number} (${formatCurrency(o.total)})`,
+          });
+          if (o.status === "ACCEPTED" || o.status === "PREPARING") {
+            logs.push({
+              id: `prep-${o.id}`,
+              time: timeStr,
+              type: "kitchen",
+              icon: "👨‍🍳",
+              message: `Kitchen is preparing Order #AT-${o.order_number} for Table ${tNum}`,
+            });
+          }
+          if (o.status === "READY") {
+            logs.push({
+              id: `rdy-${o.id}`,
+              time: timeStr,
+              type: "kitchen",
+              icon: "🟢",
+              message: `Order #AT-${o.order_number} for Table ${tNum} is Ready to serve!`,
+            });
+          }
+        });
+        requests.slice(0, 15).forEach((r) => {
+          const tNum = r.table_session?.table?.number ?? "?";
+          const icon = r.request_type === "WAITER" ? "🟣" : r.request_type === "BILL" ? "🧾" : "🔵";
+          logs.push({
+            id: `req-${r.id}`,
+            time: formatTime(r.created_at),
+            type: "request",
+            icon,
+            message: `Table ${tNum} requested ${r.request_type.toLowerCase()}`,
+          });
+        });
+        setActivityLogs(logs.sort((a, b) => b.id.localeCompare(a.id)).slice(0, 20));
+
+        const categories = (categoryResult.data ?? []) as MenuCategory[];
+        const categoryMap = new Map(categories.map((c) => [c.id, c]));
+        const menu = ((menuResult.data ?? []) as unknown as MenuItem[]).map((item) =>
+          normalizeMenuItem({
+            ...item,
+            category: categoryMap.get(item.category_id) ?? null,
+          }),
+        );
+        const branchProfile = branchResult.data as BranchProfile;
+
+        setData({
+          orders,
+          requests,
+          tables,
+          categories,
+          menu,
+          payments: ((paymentResult.data ?? []) as unknown as Payment[]).map((p) => ({
+            ...p,
+            amount: Number(p.amount),
+          })),
+          restaurant: restaurantResult.data as RestaurantProfile,
+          branch: { ...branchProfile, tax_rate: Number(branchProfile.tax_rate) },
+        });
+
+        setError(null);
+        setConnection("connected");
+        setLoading(false);
+        setRefreshing(false);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to load data.");
+        setConnection("offline");
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [staff.branchId, staff.restaurantId, playChime],
+  );
+
+  /* ─── Initial Load & Realtime Subscription ─── */
+  useEffect(() => {
+    queueMicrotask(() => void loadData());
+  }, [loadData]);
+
+  useEffect(() => {
+    const supabase = getBrowserSupabase();
+    if (!supabase) return;
+
+    const scheduleReload = () => {
+      if (reloadTimer.current) clearTimeout(reloadTimer.current);
+      reloadTimer.current = setTimeout(() => void loadData(true), 180);
+    };
+
+    const channel = supabase
+      .channel(`admin-ros-${staff.branchId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `branch_id=eq.${staff.branchId}` }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `branch_id=eq.${staff.branchId}` }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "tables", filter: `branch_id=eq.${staff.branchId}` }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "table_sessions" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, scheduleReload)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") setConnection("connected");
+        else if (status === "CLOSED" || status === "CHANNEL_ERROR") setConnection("reconnecting");
+      });
+
+    // 30-Second Fallback Polling Timer
+    pollTimer.current = setInterval(() => {
+      void loadData(true);
+    }, 30_000);
+
+    return () => {
+      if (reloadTimer.current) clearTimeout(reloadTimer.current);
+      if (pollTimer.current) clearInterval(pollTimer.current);
+      void supabase.removeChannel(channel);
+    };
+  }, [loadData, staff.branchId]);
+
+  /* ─── Toast Dismiss ─── */
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3200);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  /* ─── Metrics Calculations ─── */
+  const today = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+
+  const todayOrders = useMemo(() => data.orders.filter((o) => new Date(o.placed_at) >= today), [data.orders, today]);
+  const activeOrders = useMemo(() => data.orders.filter((o) => ["PLACED", "ACCEPTED", "PREPARING", "READY"].includes(o.status)), [data.orders]);
+  const completedOrders = useMemo(() => data.orders.filter((o) => ["SERVED", "BILLED", "PAID"].includes(o.status)), [data.orders]);
+  const openRequests = useMemo(() => data.requests.filter((r) => r.status !== "RESOLVED"), [data.requests]);
+  const paidToday = useMemo(() => data.payments.filter((p) => p.status === "SUCCESS" && new Date(p.created_at) >= today), [data.payments, today]);
+  const revenueToday = useMemo(() => paidToday.reduce((sum, p) => sum + p.amount, 0), [paidToday]);
+  const occupiedTables = useMemo(() => data.tables.filter((t) => t.state !== "AVAILABLE"), [data.tables]);
+  const availableTables = useMemo(() => data.tables.filter((t) => t.state === "AVAILABLE"), [data.tables]);
+
+  /* Most ordered item today */
+  const mostOrderedToday = useMemo(() => {
+    const map = new Map<string, number>();
+    todayOrders.forEach((o) => {
+      o.order_items?.forEach((item) => {
+        map.set(item.item_name, (map.get(item.item_name) ?? 0) + item.quantity);
+      });
+    });
+    let topName = "—";
+    let maxCount = 0;
+    map.forEach((count, name) => {
+      if (count > maxCount) {
+        maxCount = count;
+        topName = name;
+      }
+    });
+    return topName;
+  }, [todayOrders]);
+
+  /* Kitchen prep times */
+  const kitchenTimes = useMemo(() => {
+    const readyOrServed = data.orders.filter((o) => o.served_at || o.status === "READY");
+    const prepMins = readyOrServed
+      .map((o) => (o.served_at ? new Date(o.served_at).getTime() - new Date(o.placed_at).getTime() : nowTime - new Date(o.placed_at).getTime()))
+      .map((ms) => Math.floor(ms / 60000));
+    const avg = prepMins.length ? Math.round(prepMins.reduce((a, b) => a + b, 0) / prepMins.length) : 0;
+    const activePrepMins = activeOrders.map((o) => Math.floor((nowTime - new Date(o.placed_at).getTime()) / 60000));
+    const longest = activePrepMins.length ? Math.max(...activePrepMins) : 0;
+    return { avg, longest };
+  }, [data.orders, activeOrders, nowTime]);
+
+  /* ─── State Mutation Helper ─── */
+  async function mutate(
+    work: () => Promise<{ error: { message: string } | null }>,
+    successMessage: string,
+  ) {
+    setError(null);
+    const result = await work();
+    if (result.error) {
+      setError(result.error.message);
+      return false;
+    }
+    setToast(successMessage);
+    await loadData(true);
+    return true;
   }
+
+  /* ─── Single Order Advance (New -> Preparing -> Ready -> Served) ─── */
+  async function advanceOrder(order: RestaurantOrder) {
+    const supabase = getBrowserSupabase();
+    if (!supabase) return;
+    const sequence: OrderStatus[] = ["PLACED", "PREPARING", "READY", "SERVED", "BILLED"];
+    const currIndex = sequence.indexOf(order.status === "ACCEPTED" ? "PREPARING" : order.status);
+    const next = sequence[currIndex + 1];
+    if (!next) return;
+
+    await mutate(async () => {
+      const res = await supabase.rpc("advance_order_status", {
+        p_order_id: order.id,
+        p_status: next,
+      });
+      return { error: res.error };
+    }, `Order #AT-${order.order_number} is now ${statusLabel(next).toLowerCase()}.`);
+  }
+
+  /* ─── Resolve Service Request ─── */
+  async function resolveRequest(req: ServiceRequest) {
+    const supabase = getBrowserSupabase();
+    if (!supabase) return;
+    await mutate(async () => {
+      const res = await supabase
+        .from("notifications")
+        .update({ status: "RESOLVED", resolved_at: new Date().toISOString() })
+        .eq("id", req.id);
+      return { error: res.error };
+    }, `${req.request_type.toLowerCase()} request for Table ${req.table_session?.table?.number ?? ""} resolved.`);
+  }
+
+  /* ─── Sign Out ─── */
+  async function signOut() {
+    const supabase = getBrowserSupabase();
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    window.location.assign("/admin/login");
+  }
+
+  /* ─── Selected Table Context ─── */
+  const selectedTable = useMemo(() => data.tables.find((t) => t.id === selectedTableId), [data.tables, selectedTableId]);
+  const selectedTableOrders = useMemo(
+    () => (selectedTable ? data.orders.filter((o) => o.table_session?.table?.id === selectedTable.id) : []),
+    [data.orders, selectedTable],
+  );
+  const selectedTableRequests = useMemo(
+    () => (selectedTable ? data.requests.filter((r) => r.table_session?.table?.id === selectedTable.id) : []),
+    [data.requests, selectedTable],
+  );
 
   return (
     <main className="admin-shell">
+      {/* Persistent Sidebar */}
       <aside className="admin-sidebar">
         <Brand compact />
-        <div className="branch-switch"><Store size={17} /><span><small>ACTIVE BRANCH</small><strong>Main Restaurant</strong></span><ChevronRight size={14} /></div>
-        <nav aria-label="Operations navigation">{nav.map(({ label, icon: Icon }) => <button key={label} onClick={() => setSection(label)} className={section === label ? "active" : ""}><Icon size={19} /><span>{label}</span>{label === "Kitchen" && <b>{activeOrders}</b>}{label === "Waiter" && openRequests.length > 0 && <b>{openRequests.length}</b>}</button>)}</nav>
-        <div className="sidebar-footer"><div className="staff-avatar">AK</div><div><strong>Arjun Kumar</strong><span>Owner</span></div><button aria-label="Sign out"><LogOut size={17} /></button></div>
+        <div className="branch-switch">
+          <Store size={17} />
+          <span>
+            <small>ACTIVE RESTAURANT</small>
+            <strong>Athidhi Restaurant</strong>
+          </span>
+        </div>
+
+        <nav aria-label="ROS navigation">
+          {navItems.map(({ label, icon: Icon }) => (
+            <button
+              key={label}
+              onClick={() => setSection(label)}
+              className={section === label ? "active" : ""}
+            >
+              <Icon size={19} />
+              <span>{label}</span>
+              {label === "Kitchen" && activeOrders.length > 0 && <b>{activeOrders.length}</b>}
+              {label === "Service Requests" && openRequests.length > 0 && <b>{openRequests.length}</b>}
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="staff-avatar">
+            {staff.fullName.split(" ").map((p) => p[0]).join("").slice(0, 2).toUpperCase()}
+          </div>
+          <div>
+            <strong>{staff.fullName}</strong>
+            <span>{staff.roleName}</span>
+          </div>
+          <button aria-label="Sign out" onClick={() => void signOut()}>
+            <LogOut size={17} />
+          </button>
+        </div>
       </aside>
 
+      {/* Main Main Workspace */}
       <section className="admin-main">
+        {/* Topbar */}
         <header className="admin-header">
-          <div><span className="admin-breadcrumb">ATHIDHI ROS / {section.toUpperCase()}</span><h1>{section === "Overview" ? "Good evening, Arjun." : section}</h1></div>
-          <div className="admin-header__actions"><label><Search size={17} /><input placeholder="Search orders, tables…" aria-label="Search operations" /></label><button className="admin-live"><span /> All systems live</button><button className="admin-notification"><BellRing size={19} /><i>{openRequests.length}</i></button></div>
+          <div>
+            <span className="admin-breadcrumb">ATHIDHI ROS / {section.toUpperCase()}</span>
+            <h1>{section === "Dashboard" ? `Control Center — Welcome, ${staff.fullName.split(" ")[0]}.` : section}</h1>
+          </div>
+
+          <div className="admin-header__actions">
+            {/* Live Clock */}
+            <div className="admin-clock">
+              <Clock size={15} />
+              <span>{formatLiveClock(nowTime)}</span>
+            </div>
+
+            {/* Global Search */}
+            <label className="admin-search-label">
+              <Search size={16} />
+              <input
+                placeholder="Search table, order, notes…"
+                aria-label="Global Search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {search && (
+                <button onClick={() => setSearch("")} aria-label="Clear search">
+                  <X size={14} />
+                </button>
+              )}
+            </label>
+
+            {/* Connection Status */}
+            <div className={`admin-live admin-live--${connection}`}>
+              <span />
+              {connection === "connected"
+                ? "🟢 Connected"
+                : connection === "reconnecting"
+                  ? "🟡 Reconnecting…"
+                  : "🔴 Offline Mode"}
+            </div>
+
+            {/* Notification Bell */}
+            <button
+              className="admin-notification"
+              onClick={() => setNotifOpen(!notifOpen)}
+              aria-label="Open notifications"
+            >
+              <BellRing size={19} />
+              {openRequests.length + activeOrders.length > 0 && (
+                <i>{openRequests.length + activeOrders.length}</i>
+              )}
+            </button>
+
+            {/* Sound Toggle */}
+            <button
+              className="admin-notification"
+              onClick={() => setSoundEnabled(!soundEnabled)}
+              title={soundEnabled ? "Mute alert sounds" : "Enable alert sounds"}
+            >
+              {soundEnabled ? <Volume2 size={19} /> : <VolumeX size={19} />}
+            </button>
+          </div>
         </header>
 
+        {/* Offline Banner */}
+        {connection === "offline" && (
+          <div className="admin-offline-banner">
+            <AlertTriangle size={18} />
+            <span>Connection lost. Polling backend every 30 seconds…</span>
+            <button onClick={() => void loadData(true)}>
+              <RefreshCw size={14} /> Retry Now
+            </button>
+          </div>
+        )}
+
+        {/* Workspace Content */}
         <div className="admin-content">
-          {section === "Overview" && <Overview revenue={revenue} orders={orders} requests={openRequests} onSection={setSection} />}
-          {section === "Kitchen" && <Kitchen orders={orders} advance={advanceOrder} />}
-          {section === "Waiter" && <Waiter requests={openRequests} resolve={(id) => setOpenRequests((current) => current.filter((request) => request.id !== id))} />}
-          {section === "Checkout" && <Checkout selected={selectedBill} setSelected={setSelectedBill} payment={payment} setPayment={setPayment} />}
-          {section === "Tables" && <Tables />}
-          {section === "Menu" && <MenuManager available={available} setAvailable={setAvailable} />}
-          {section === "Analytics" && <Analytics />}
-          {section === "Settings" && <SettingsPanel />}
+          {error && (
+            <div className="admin-error" role="alert">
+              <div>
+                <strong>Operation error</strong>
+                <span>{error}</span>
+              </div>
+              <button onClick={() => setError(null)} aria-label="Dismiss">
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="admin-loading">
+              <LoaderCircle className="spin" size={32} />
+              <strong>Loading ROS Control Center…</strong>
+            </div>
+          ) : (
+            <>
+              {section === "Dashboard" && (
+                <DashboardWorkspace
+                  data={data}
+                  occupiedTables={occupiedTables.length}
+                  availableTables={availableTables.length}
+                  todayOrders={todayOrders.length}
+                  activeOrders={activeOrders.length}
+                  completedOrders={completedOrders.length}
+                  openRequests={openRequests.length}
+                  revenueToday={revenueToday}
+                  mostOrderedToday={mostOrderedToday}
+                  kitchenTimes={kitchenTimes}
+                  activityLogs={activityLogs}
+                  search={search}
+                  onSection={setSection}
+                  onSelectTable={(id) => setSelectedTableId(id)}
+                />
+              )}
+
+              {section === "Live Tables" && (
+                <LiveTablesWorkspace
+                  tables={data.tables}
+                  orders={data.orders}
+                  search={search}
+                  onSelectTable={(id) => setSelectedTableId(id)}
+                />
+              )}
+
+              {section === "Orders" && (
+                <OrdersWorkspace
+                  orders={data.orders}
+                  search={search}
+                  advance={advanceOrder}
+                />
+              )}
+
+              {section === "Kitchen" && (
+                <KitchenWorkspace
+                  orders={data.orders}
+                  search={search}
+                  nowTime={nowTime}
+                  kitchenTimes={kitchenTimes}
+                  advance={advanceOrder}
+                />
+              )}
+
+              {section === "Service Requests" && (
+                <ServiceRequestsWorkspace
+                  requests={data.requests}
+                  orders={data.orders}
+                  search={search}
+                  resolve={resolveRequest}
+                  advance={advanceOrder}
+                />
+              )}
+
+              {section === "Settings" && data.restaurant && data.branch && (
+                <SettingsWorkspace
+                  restaurant={data.restaurant}
+                  branch={data.branch}
+                  soundEnabled={soundEnabled}
+                  setSoundEnabled={setSoundEnabled}
+                  mutate={mutate}
+                />
+              )}
+            </>
+          )}
         </div>
       </section>
+
+      {/* Notification Center Flyout */}
+      {notifOpen && (
+        <div className="admin-notif-flyout">
+          <header>
+            <strong>Notification History</strong>
+            <button onClick={() => setNotifOpen(false)}>
+              <X size={16} />
+            </button>
+          </header>
+          <div className="admin-notif-tabs">
+            {["all", "orders", "kitchen", "requests"].map((t) => (
+              <button
+                key={t}
+                className={notifFilter === t ? "active" : ""}
+                onClick={() => setNotifFilter(t)}
+              >
+                {t.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <div className="admin-notif-list">
+            {activityLogs
+              .filter((log) => notifFilter === "all" || log.type === notifFilter)
+              .map((log) => (
+                <div key={log.id} className="admin-notif-item">
+                  <span>{log.icon}</span>
+                  <div>
+                    <p>{log.message}</p>
+                    <small>{log.time}</small>
+                  </div>
+                </div>
+              ))}
+            {!activityLogs.length && <div className="admin-empty">No notifications yet</div>}
+          </div>
+        </div>
+      )}
+
+      {/* Table Details Side Drawer */}
+      {selectedTable && (
+        <TableDetailsDrawer
+          table={selectedTable}
+          orders={selectedTableOrders}
+          requests={selectedTableRequests}
+          onClose={() => setSelectedTableId(null)}
+        />
+      )}
+
+      {/* Toast Feedback */}
+      {toast && (
+        <div className="admin-toast" role="status">
+          <CheckCircle2 size={16} />
+          {toast}
+        </div>
+      )}
     </main>
   );
 }
 
-function Overview({ revenue, orders, requests, onSection }: { revenue: number; orders: KitchenOrder[]; requests: ServiceRequest[]; onSection: (section: Section) => void }) {
+/* ─────────── 1. Dashboard Workspace ─────────── */
+
+function DashboardWorkspace({
+  data,
+  occupiedTables,
+  availableTables,
+  todayOrders,
+  activeOrders,
+  completedOrders,
+  openRequests,
+  revenueToday,
+  mostOrderedToday,
+  kitchenTimes,
+  activityLogs,
+  search,
+  onSection,
+  onSelectTable,
+}: {
+  data: OperationalData;
+  occupiedTables: number;
+  availableTables: number;
+  todayOrders: number;
+  activeOrders: number;
+  completedOrders: number;
+  openRequests: number;
+  revenueToday: number;
+  mostOrderedToday: string;
+  kitchenTimes: { avg: number; longest: number };
+  activityLogs: ActivityLogItem[];
+  search: string;
+  onSection: (s: Section) => void;
+  onSelectTable: (id: string) => void;
+}) {
   const cards = [
-    { label: "Today’s revenue", value: `₹${revenue.toLocaleString("en-IN")}`, trend: "+12.4% vs yesterday", icon: CircleDollarSign },
-    { label: "Orders served", value: "186", trend: "+18 today", icon: ReceiptIndianRupee },
-    { label: "Active tables", value: "14 / 20", trend: "70% occupancy", icon: Table2 },
-    { label: "Average ticket", value: "₹453", trend: "+6.2% this week", icon: Activity },
+    { label: "Today’s Revenue", value: formatCurrency(revenueToday), sub: "Settled payments", icon: CircleDollarSign },
+    { label: "Total Tables", value: String(data.tables.length), sub: `${occupiedTables} occupied · ${availableTables} available`, icon: Table2 },
+    { label: "Orders Today", value: String(todayOrders), sub: `${completedOrders} completed · ${activeOrders} pending`, icon: ShoppingBag },
+    { label: "Service Requests", value: String(openRequests), sub: openRequests ? "Requires staff action" : "All clear", icon: BellRing },
   ];
-  return <>
-    <div className="overview-strip"><div><span className="pulse-dot" /><span><strong>Dinner service is in full swing</strong><small>14 tables seated · Kitchen avg. 19 min</small></span></div><button onClick={() => onSection("Kitchen")}>Open kitchen display <ChevronRight size={16} /></button></div>
-    <div className="kpi-grid">{cards.map(({ label, value, trend, icon: Icon }) => <article key={label}><div><span>{label}</span><Icon size={18} /></div><strong>{value}</strong><small>{trend}</small></article>)}</div>
-    <div className="dashboard-grid">
-      <section className="admin-card live-orders"><div className="admin-card__head"><div><h2>Live orders</h2><span>{orders.filter((order) => order.status !== "Completed").length} active right now</span></div><button onClick={() => onSection("Kitchen")}>View kitchen <ChevronRight size={15} /></button></div><div className="order-table"><div className="order-table__head"><span>ORDER</span><span>TABLE</span><span>ITEMS</span><span>TIME</span><span>STATUS</span><span /></div>{orders.filter((order) => order.status !== "Completed").slice(0, 5).map((order) => <div className="order-row" key={order.id}><strong>#{order.id}</strong><span className="table-pill">T{order.table}</span><span>{order.items.join(" · ")}</span><span className={order.minutes > 15 ? "late" : ""}><Clock3 size={14} /> {order.minutes}m</span><span className={`status status--${order.status.toLowerCase()}`}>{order.status}</span><button aria-label={`More options for ${order.id}`}><MoreHorizontal size={17} /></button></div>)}</div></section>
-      <section className="admin-card request-card"><div className="admin-card__head"><div><h2>Service requests</h2><span>Live from the dining floor</span></div><button onClick={() => onSection("Waiter")}>View all</button></div><div className="request-list">{requests.map((request) => <div key={request.id} className={`request-row request-row--${request.priority}`}><span className="request-icon">{request.type === "Bill" ? "₹" : request.type.slice(0, 1)}</span><div><strong>Table {request.table} · {request.type}</strong><small>Waiting {request.time}</small></div><ChevronRight size={17} /></div>)}</div></section>
-      <section className="admin-card revenue-card"><div className="admin-card__head"><div><h2>Revenue pulse</h2><span>Today by hour</span></div><span className="revenue-total">₹84.2K</span></div><MiniChart /></section>
-      <section className="admin-card table-card"><div className="admin-card__head"><div><h2>Dining floor</h2><span>20 tables · 14 occupied</span></div><button onClick={() => onSection("Tables")}>Manage</button></div><div className="mini-tables">{Array.from({ length: 20 }, (_, index) => { const n = index + 1; const cls = [1, 6, 10, 15, 17, 20].includes(n) ? "free" : [8, 12].includes(n) ? "attention" : "occupied"; return <span key={n} className={cls}>{n}</span>; })}</div><div className="table-legend"><span><i className="free" />Available</span><span><i className="occupied" />Dining</span><span><i className="attention" />Needs attention</span></div></section>
+
+  const filteredLogs = activityLogs.filter((l) => l.message.toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div className="admin-dashboard-layout">
+      {/* Live Operational Stats Strip */}
+      <div className="admin-stats-strip">
+        <div>
+          <Flame size={18} style={{ color: "var(--gold)" }} />
+          <span>
+            <strong>Most Ordered Today:</strong> {mostOrderedToday}
+          </span>
+        </div>
+        <div>
+          <Clock size={18} style={{ color: "var(--gold)" }} />
+          <span>
+            <strong>Avg Prep:</strong> {kitchenTimes.avg}m · <strong>Longest Wait:</strong> {kitchenTimes.longest}m
+          </span>
+        </div>
+        <div>
+          <Activity size={18} style={{ color: "var(--gold)" }} />
+          <span>
+            <strong>Active Kitchen Orders:</strong> {activeOrders}
+          </span>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="kpi-grid">
+        {cards.map(({ label, value, sub, icon: Icon }) => (
+          <article key={label}>
+            <div>
+              <span>{label}</span>
+              <Icon size={18} />
+            </div>
+            <strong>{value}</strong>
+            <small>{sub}</small>
+          </article>
+        ))}
+      </div>
+
+      {/* 4 Dashboard Sections Grid */}
+      <div className="dashboard-grid-4">
+        {/* Section A: Live Tables Overview */}
+        <section className="admin-card">
+          <div className="admin-card__head">
+            <div>
+              <h2>Live Tables</h2>
+              <span>{occupiedTables} occupied right now</span>
+            </div>
+            <button onClick={() => onSection("Live Tables")}>
+              View floor <ChevronRight size={15} />
+            </button>
+          </div>
+          <div className="dashboard-tables-grid">
+            {data.tables.map((t) => (
+              <div
+                key={t.id}
+                className={`dashboard-table-tile state-${t.state.toLowerCase()}`}
+                onClick={() => onSelectTable(t.id)}
+              >
+                <strong>T{t.number}</strong>
+                <small>{t.state.replaceAll("_", " ")}</small>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Section B: Recent Orders */}
+        <section className="admin-card">
+          <div className="admin-card__head">
+            <div>
+              <h2>Recent Orders</h2>
+              <span>{activeOrders} in preparation</span>
+            </div>
+            <button onClick={() => onSection("Orders")}>
+              All orders <ChevronRight size={15} />
+            </button>
+          </div>
+          <div className="admin-card-list">
+            {data.orders.slice(0, 5).map((o) => (
+              <div className="live-order-row" key={o.id}>
+                <span className="table-bubble">T{o.table_session?.table?.number ?? "?"}</span>
+                <div>
+                  <strong>#AT-{o.order_number}</strong>
+                  <small>{o.order_items?.map((i) => `${i.quantity}× ${i.item_name}`).join(", ") || "Items loading"}</small>
+                </div>
+                <span className={`status-pill status-pill--${o.status.toLowerCase()}`}>{statusLabel(o.status)}</span>
+                <strong>{formatCurrency(o.total)}</strong>
+              </div>
+            ))}
+            {!data.orders.length && <div className="admin-empty">No orders placed today.</div>}
+          </div>
+        </section>
+
+        {/* Section C: Live Activity Timeline */}
+        <section className="admin-card">
+          <div className="admin-card__head">
+            <div>
+              <h2>Live Activity Feed</h2>
+              <span>Realtime event log</span>
+            </div>
+          </div>
+          <div className="admin-timeline">
+            {filteredLogs.map((log) => (
+              <div key={log.id} className="admin-timeline-item">
+                <span className="timeline-icon">{log.icon}</span>
+                <div>
+                  <p>{log.message}</p>
+                  <small>{log.time}</small>
+                </div>
+              </div>
+            ))}
+            {!filteredLogs.length && <div className="admin-empty">No activity recorded.</div>}
+          </div>
+        </section>
+
+        {/* Section D: Active Service Requests */}
+        <section className="admin-card">
+          <div className="admin-card__head">
+            <div>
+              <h2>Active Requests</h2>
+              <span>{data.requests.filter((r) => r.status !== "RESOLVED").length} open</span>
+            </div>
+            <button onClick={() => onSection("Service Requests")}>
+              Queue <ChevronRight size={15} />
+            </button>
+          </div>
+          <div className="admin-card-list">
+            {data.requests.filter((r) => r.status !== "RESOLVED").slice(0, 5).map((req) => (
+              <div className="request-row" key={req.id}>
+                <span className="table-bubble">T{req.table_session?.table?.number ?? "—"}</span>
+                <div>
+                  <strong>{req.request_type}</strong>
+                  <small>{relativeTime(req.created_at)}</small>
+                </div>
+              </div>
+            ))}
+            {!data.requests.filter((r) => r.status !== "RESOLVED").length && (
+              <div className="admin-empty">All service requests resolved.</div>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
-  </>;
+  );
 }
 
-function Kitchen({ orders, advance }: { orders: KitchenOrder[]; advance: (id: string) => void }) {
-  const statuses: KitchenStatus[] = ["New", "Preparing", "Ready", "Completed"];
-  return <div className="kitchen-view"><div className="view-intro"><div><p className="eyebrow eyebrow--maroon"><span /> Kitchen display system</p><h2>Move every plate, right on time.</h2></div><div className="kitchen-metric"><Clock3 /><span><small>AVG. PREP TIME</small><strong>18m 42s</strong></span></div></div><div className="kitchen-board">{statuses.map((status) => <section key={status} className={`kitchen-column kitchen-column--${status.toLowerCase()}`}><header><div><span /> <strong>{status}</strong></div><b>{orders.filter((order) => order.status === status).length}</b></header><div>{orders.filter((order) => order.status === status).map((order) => <article key={order.id} className={order.priority ? "priority" : ""}><div className="ticket-head"><span><strong>TABLE {order.table}</strong><small>#{order.id}</small></span><b className={order.minutes > 15 ? "late" : ""}>{order.minutes}m</b></div><ul>{order.items.map((item) => <li key={item}>{item}</li>)}</ul>{status !== "Completed" && <button onClick={() => advance(order.id)}>{status === "Ready" ? "Mark served" : status === "Preparing" ? "Mark ready" : "Start preparing"}<ChevronRight size={15} /></button>}</article>)}</div></section>)}</div></div>;
+/* ─────────── 2. Live Tables Workspace ─────────── */
+
+function LiveTablesWorkspace({
+  tables,
+  orders,
+  search,
+  onSelectTable,
+}: {
+  tables: DiningTable[];
+  orders: RestaurantOrder[];
+  search: string;
+  onSelectTable: (id: string) => void;
+}) {
+  const [viewMode, setViewMode] = useState<"grid" | "floor">("grid");
+  const [filterState, setFilterState] = useState<string>("ALL");
+
+  const filtered = useMemo(() => {
+    return tables.filter((t) => {
+      const matchSearch = `${t.number} ${t.state}`.toLowerCase().includes(search.toLowerCase());
+      const matchFilter = filterState === "ALL" || t.state === filterState;
+      return matchSearch && matchFilter;
+    });
+  }, [tables, search, filterState]);
+
+  return (
+    <div>
+      <div className="view-intro">
+        <div>
+          <p className="eyebrow eyebrow--maroon"><span /> Live Floor Overview</p>
+          <h2>{tables.length} tables configured</h2>
+        </div>
+        <div className="view-toggle">
+          <button className={viewMode === "grid" ? "active" : ""} onClick={() => setViewMode("grid")}>
+            Grid View
+          </button>
+          <button className={viewMode === "floor" ? "active" : ""} onClick={() => setViewMode("floor")}>
+            Visual Floor Map
+          </button>
+        </div>
+      </div>
+
+      {/* Filter Tabs */}
+      <div className="table-filter-bar">
+        {["ALL", "AVAILABLE", "ORDERING", "PREPARING", "READY", "DINING", "BILL_REQUESTED"].map((st) => (
+          <button
+            key={st}
+            className={filterState === st ? "active" : ""}
+            onClick={() => setFilterState(st)}
+          >
+            {st.replaceAll("_", " ")}
+          </button>
+        ))}
+      </div>
+
+      {viewMode === "grid" ? (
+        <div className="tables-grid">
+          {filtered.map((t) => {
+            const tableOrders = orders.filter((o) => o.table_session?.table?.id === t.id && o.status !== "PAID");
+            const totalSpend = tableOrders.reduce((sum, o) => sum + o.total, 0);
+
+            return (
+              <article
+                key={t.id}
+                className={`table-tile state-${t.state.toLowerCase().replaceAll("_", "-")}`}
+                onClick={() => onSelectTable(t.id)}
+              >
+                <div className="table-tile__head">
+                  <span>TABLE</span>
+                  <strong>{String(t.number).padStart(2, "0")}</strong>
+                </div>
+                <span className="table-state-badge">
+                  <i /> {t.state.replaceAll("_", " ")}
+                </span>
+                <div className="table-tile__info">
+                  <span>{tableOrders.length} active orders</span>
+                  <strong>{formatCurrency(totalSpend)}</strong>
+                </div>
+                <button>Manage Table <ChevronRight size={14} /></button>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        /* Visual Floor Map */
+        <div className="visual-floor-map">
+          <h3>Restaurant Main Dining Map</h3>
+          <div className="floor-map-grid">
+            {filtered.map((t) => (
+              <div
+                key={t.id}
+                className={`floor-node state-${t.state.toLowerCase().replaceAll("_", "-")}`}
+                onClick={() => onSelectTable(t.id)}
+              >
+                <strong>T{t.number}</strong>
+                <small>{t.capacity} seats</small>
+                <span>{t.state.replaceAll("_", " ")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
-function Waiter({ requests, resolve }: { requests: ServiceRequest[]; resolve: (id: number) => void }) {
-  const priority = { Bill: 1, Waiter: 2, Water: 3, Spoon: 4, Tissue: 5 } as Record<string, number>;
-  return <div><div className="view-intro"><div><p className="eyebrow eyebrow--maroon"><span /> Dining room</p><h2>Every request, in priority order.</h2></div><div className="kitchen-metric"><BellRing /><span><small>OPEN REQUESTS</small><strong>{requests.length}</strong></span></div></div><div className="waiter-list">{[...requests].sort((a, b) => priority[a.type] - priority[b.type]).map((request) => <article key={request.id} className={`waiter-request waiter-request--${request.priority}`}><span className="request-rank">0{priority[request.type]}</span><div className="request-icon request-icon--large">{request.type === "Bill" ? "₹" : request.type.slice(0, 1)}</div><div><span>{request.type.toUpperCase()} REQUEST</span><h3>Table {request.table}</h3><p>Guest has been waiting {request.time}</p></div><div className="request-actions"><button onClick={() => resolve(request.id)}>Acknowledge</button><button className="resolve" onClick={() => resolve(request.id)}>Mark resolved <ChevronRight size={15} /></button></div></article>)}{!requests.length && <div className="empty-state"><Sparkles /><h3>Dining room is all clear</h3><p>No open guest requests.</p></div>}</div></div>;
+/* ─────────── 3. Orders Workspace ─────────── */
+
+function OrdersWorkspace({
+  orders,
+  search,
+  advance,
+}: {
+  orders: RestaurantOrder[];
+  search: string;
+  advance: (o: RestaurantOrder) => Promise<void>;
+}) {
+  const filtered = useMemo(() => {
+    if (!search) return orders;
+    return orders.filter((o) =>
+      `${o.order_number} ${o.table_session?.table?.number ?? ""} ${o.status} ${o.notes ?? ""}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+    );
+  }, [orders, search]);
+
+  return (
+    <div>
+      <div className="view-intro">
+        <div>
+          <p className="eyebrow eyebrow--maroon"><span /> Orders Feed</p>
+          <h2>{filtered.length} total orders recorded</h2>
+        </div>
+      </div>
+
+      <div className="orders-feed-list">
+        {filtered.map((o) => (
+          <article className="order-feed-card" key={o.id}>
+            <div className="order-feed-card__head">
+              <div>
+                <strong>Order #AT-{o.order_number}</strong>
+                <span>Table {o.table_session?.table?.number ?? "—"}</span>
+              </div>
+              <span className={`status-pill status-pill--${o.status.toLowerCase()}`}>
+                {statusLabel(o.status)}
+              </span>
+            </div>
+            <div className="order-feed-card__items">
+              {o.order_items?.map((item) => (
+                <div key={item.id}>
+                  <span>
+                    {item.quantity}× {item.item_name}
+                  </span>
+                  <span>{formatCurrency(item.line_total)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="order-feed-card__footer">
+              <small>{relativeTime(o.placed_at)}</small>
+              <strong>{formatCurrency(o.total)}</strong>
+              {["PLACED", "ACCEPTED", "PREPARING", "READY"].includes(o.status) && (
+                <button onClick={() => void advance(o)}>
+                  Advance Status <ChevronRight size={15} />
+                </button>
+              )}
+            </div>
+          </article>
+        ))}
+        {!filtered.length && <div className="admin-empty">No orders found.</div>}
+      </div>
+    </div>
+  );
 }
 
-function Checkout({ selected, setSelected, payment, setPayment }: { selected: number; setSelected: (table: number) => void; payment: string; setPayment: (value: string) => void }) {
-  const bills = [{ table: 8, order: "AT-1048", total: 934, items: 4 }, { table: 12, order: "AT-1043", total: 1268, items: 7 }, { table: 4, order: "AT-1039", total: 642, items: 3 }];
-  const bill = bills.find((item) => item.table === selected) ?? bills[0];
-  const base = Math.round(bill.total / 1.05); const gst = bill.total - base;
-  return <div className="checkout-grid"><section className="admin-card bill-queue"><div className="admin-card__head"><div><h2>Ready to checkout</h2><span>{bills.length} tables requested the bill</span></div></div>{bills.map((item) => <button key={item.table} className={selected === item.table ? "active" : ""} onClick={() => setSelected(item.table)}><span className="table-bubble">T{item.table}</span><span><strong>Table {item.table}</strong><small>#{item.order} · {item.items} items</small></span><strong>₹{item.total}</strong><ChevronRight size={16} /></button>)}</section><section className="admin-card bill-sheet"><div className="bill-brand"><Brand compact /><span>ORDER #{bill.order}</span></div><div className="bill-title"><div><span>CHECKOUT</span><h2>Table {bill.table}</h2></div><span>22 Jul 2026 · 9:18 PM</span></div><div className="bill-lines"><div><span>2 × Athidhi Chicken Dum Biryani</span><strong>₹578</strong></div><div><span>1 × Paneer Tikka</span><strong>₹249</strong></div><div><span>2 × Butter Naan</span><strong>₹118</strong></div></div><div className="bill-summary"><div><span>Subtotal</span><strong>₹{base}</strong></div><div><span>GST (5%)</span><strong>₹{gst}</strong></div><div><span>Round off</span><strong>₹0</strong></div><div><span>Amount due</span><strong>₹{bill.total}</strong></div></div><div className="payment-picker"><span>PAYMENT METHOD</span><div>{["UPI", "Cash", "Card"].map((method) => <button className={payment === method ? "active" : ""} onClick={() => setPayment(method)} key={method}>{method === "UPI" ? <WalletCards /> : method === "Cash" ? <CircleDollarSign /> : <CreditCard />}<strong>{method}</strong>{payment === method && <i>✓</i>}</button>)}</div></div><div className="checkout-actions"><button onClick={() => window.print()}><Printer size={17} /> Print</button><button className="collect">Collect ₹{bill.total} via {payment} <ChevronRight size={17} /></button></div></section></div>;
+/* ─────────── 4. Kitchen Workspace (KDS) ─────────── */
+
+function KitchenWorkspace({
+  orders,
+  search,
+  nowTime,
+  kitchenTimes,
+  advance,
+}: {
+  orders: RestaurantOrder[];
+  search: string;
+  nowTime: number;
+  kitchenTimes: { avg: number; longest: number };
+  advance: (o: RestaurantOrder) => Promise<void>;
+}) {
+  const active = useMemo(
+    () =>
+      orders.filter(
+        (o) =>
+          ["PLACED", "ACCEPTED", "PREPARING", "READY"].includes(o.status) &&
+          orderMatches(o, search),
+      ),
+    [orders, search],
+  );
+
+  const lanes: { status: string[]; title: string }[] = [
+    { status: ["PLACED"], title: "New Orders" },
+    { status: ["ACCEPTED", "PREPARING"], title: "Preparing" },
+    { status: ["READY"], title: "Ready" },
+  ];
+
+  return (
+    <div>
+      {/* Kitchen Summary Header */}
+      <div className="kitchen-kpi-bar">
+        <div>
+          <span>New Orders</span>
+          <strong>{active.filter((o) => o.status === "PLACED").length}</strong>
+        </div>
+        <div>
+          <span>Preparing</span>
+          <strong>{active.filter((o) => ["ACCEPTED", "PREPARING"].includes(o.status)).length}</strong>
+        </div>
+        <div>
+          <span>Ready</span>
+          <strong>{active.filter((o) => o.status === "READY").length}</strong>
+        </div>
+        <div>
+          <span>Avg Prep Time</span>
+          <strong>{kitchenTimes.avg}m</strong>
+        </div>
+        <div>
+          <span>Longest Waiting</span>
+          <strong>{kitchenTimes.longest}m</strong>
+        </div>
+      </div>
+
+      {/* KDS Kanban Board */}
+      <div className="kitchen-board">
+        {lanes.map((lane) => {
+          const laneOrders = active
+            .filter((o) => lane.status.includes(o.status))
+            .sort((a, b) => new Date(a.placed_at).getTime() - new Date(b.placed_at).getTime()); // Oldest first priority
+
+          return (
+            <section key={lane.title} className="kitchen-column">
+              <header>
+                <div>
+                  <span />
+                  <strong>{lane.title}</strong>
+                </div>
+                <b>{laneOrders.length}</b>
+              </header>
+              <div className="kitchen-column__cards">
+                {laneOrders.map((o) => {
+                  const elapsedMins = Math.floor((nowTime - new Date(o.placed_at).getTime()) / 60000);
+                  const elapsedSecs = Math.floor(((nowTime - new Date(o.placed_at).getTime()) % 60000) / 1000);
+                  const priorityClass = elapsedMins >= 20 ? "priority-red" : elapsedMins >= 10 ? "priority-orange" : "priority-green";
+
+                  return (
+                    <article key={o.id} className={`kitchen-ticket ${priorityClass}`}>
+                      <div className="ticket-head">
+                        <span className="table-bubble">T{tableNumber(o)}</span>
+                        <div>
+                          <strong>Order #AT-{o.order_number}</strong>
+                          <small>Placed {formatTime(o.placed_at)}</small>
+                        </div>
+                        <span className="ticket-timer">
+                          {elapsedMins}m {elapsedSecs}s
+                        </span>
+                      </div>
+
+                      <ul>
+                        {o.order_items?.map((item) => (
+                          <li key={item.id}>
+                            <b>{item.quantity}×</b> {item.item_name}
+                            {item.is_parcel && <small className="parcel-tag">PARCEL</small>}
+                          </li>
+                        ))}
+                      </ul>
+
+                      {(o.spice_level || o.notes) && (
+                        <div className="ticket-notes">
+                          {o.spice_level && <span>🔥 {o.spice_level} spice</span>}
+                          {o.notes && <p>📝 {o.notes}</p>}
+                        </div>
+                      )}
+
+                      <button onClick={() => void advance(o)}>
+                        {o.status === "PLACED" ? "Accept & Start Cooking" : o.status === "READY" ? "Mark Served" : "Mark Ready"}
+                        <ChevronRight size={15} />
+                      </button>
+                    </article>
+                  );
+                })}
+                {!laneOrders.length && <div className="admin-empty">No {lane.title.toLowerCase()}.</div>}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
-function Tables() {
-  const states = ["AVAILABLE", "DINING", "ORDERING", "PREPARING", "READY", "BILL REQUESTED"];
-  return <div><div className="view-intro"><div><p className="eyebrow eyebrow--maroon"><span /> Floor management</p><h2>Twenty tables, one clear view.</h2></div><button className="primary-admin-button">+ Add table</button></div><div className="tables-grid">{Array.from({ length: 20 }, (_, i) => { const number = i + 1; const state = [1, 6, 10, 15, 17, 20].includes(number) ? states[0] : number === 12 ? states[5] : number === 8 ? states[4] : number % 3 === 0 ? states[3] : states[1]; return <article key={number} className={`table-tile table-tile--${state.toLowerCase().replace(" ", "-")}`}><div><span>TABLE</span><strong>{String(number).padStart(2, "0")}</strong></div><span className="table-state"><i />{state}</span><p>{state === "AVAILABLE" ? "Ready for guests" : state === "BILL REQUESTED" ? "Bill requested · 1m" : state === "READY" ? "Order ready to serve" : `Seated · ${12 + number}m`}</p><button>View table <ChevronRight size={15} /></button></article>; })}</div></div>;
+/* ─────────── 5. Service Requests Workspace ─────────── */
+
+function ServiceRequestsWorkspace({
+  requests,
+  orders,
+  search,
+  resolve,
+  advance,
+}: {
+  requests: ServiceRequest[];
+  orders: RestaurantOrder[];
+  search: string;
+  resolve: (r: ServiceRequest) => Promise<void>;
+  advance: (o: RestaurantOrder) => Promise<void>;
+}) {
+  const openRequests = useMemo(
+    () =>
+      requests.filter(
+        (r) =>
+          r.status !== "RESOLVED" &&
+          `${r.request_type} ${r.table_session?.table?.number ?? ""}`.toLowerCase().includes(search.toLowerCase()),
+      ),
+    [requests, search],
+  );
+
+  const readyOrders = useMemo(
+    () => orders.filter((o) => o.status === "READY" && orderMatches(o, search)),
+    [orders, search],
+  );
+
+  return (
+    <div className="waiter-workspace-grid">
+      {/* Service Queue */}
+      <section className="admin-card">
+        <div className="admin-card__head">
+          <div>
+            <h2>Service Requests Queue</h2>
+            <span>{openRequests.length} awaiting action</span>
+          </div>
+        </div>
+        <div className="admin-card-list">
+          {openRequests.map((req) => (
+            <article className="request-row" key={req.id}>
+              <span className="table-bubble">T{req.table_session?.table?.number ?? "—"}</span>
+              <div>
+                <strong>{req.request_type} Request</strong>
+                <small>{relativeTime(req.created_at)}</small>
+              </div>
+              <button className="resolve-button" onClick={() => void resolve(req)}>
+                Resolve Request
+              </button>
+            </article>
+          ))}
+          {!openRequests.length && <div className="admin-empty">All service requests resolved!</div>}
+        </div>
+      </section>
+
+      {/* Ready to Serve Queue */}
+      <section className="admin-card">
+        <div className="admin-card__head">
+          <div>
+            <h2>Ready to Serve</h2>
+            <span>{readyOrders.length} food orders</span>
+          </div>
+        </div>
+        <div className="admin-card-list">
+          {readyOrders.map((o) => (
+            <article className="request-row" key={o.id}>
+              <span className="table-bubble">T{tableNumber(o)}</span>
+              <div>
+                <strong>Order #AT-{o.order_number}</strong>
+                <small>{o.order_items?.length ?? 0} items ready</small>
+              </div>
+              <button className="resolve-button" onClick={() => void advance(o)}>
+                Mark Served
+              </button>
+            </article>
+          ))}
+          {!readyOrders.length && <div className="admin-empty">No orders waiting to be served.</div>}
+        </div>
+      </section>
+    </div>
+  );
 }
 
-function MenuManager({ available, setAvailable }: { available: Record<number, boolean>; setAvailable: (value: Record<number, boolean>) => void }) {
-  const [query, setQuery] = useState("");
-  const filtered = useMemo(() => menuItems.filter((item) => item.name.toLowerCase().includes(query.toLowerCase())), [query]);
-  return <div><div className="view-intro"><div><p className="eyebrow eyebrow--maroon"><span /> Menu management</p><h2>Keep every dish up to date.</h2></div><button className="primary-admin-button">+ Add dish</button></div><section className="admin-card menu-manager"><div className="manager-toolbar"><label><Search size={17} /><input placeholder="Search dishes…" value={query} onChange={(event) => setQuery(event.target.value)} /></label><button>All categories</button><button>All diets</button></div><div className="manager-table"><div className="manager-head"><span>DISH</span><span>CATEGORY</span><span>PRICE</span><span>AVAILABLE</span><span /></div>{filtered.map((item) => <div className="manager-row" key={item.id}><div><img src={item.image} alt="" /><span><strong>{item.name}</strong><small><FoodMark veg={item.veg} /> {item.group}</small></span></div><span>{item.category}</span><strong>₹{item.price}</strong><label className="availability"><input type="checkbox" checked={available[item.id]} onChange={() => setAvailable({ ...available, [item.id]: !available[item.id] })} /><i /></label><button><MoreHorizontal /></button></div>)}</div></section></div>;
+/* ─────────── 6. Settings Workspace ─────────── */
+
+function SettingsWorkspace({
+  restaurant,
+  branch,
+  soundEnabled,
+  setSoundEnabled,
+  mutate,
+}: {
+  restaurant: RestaurantProfile;
+  branch: BranchProfile;
+  soundEnabled: boolean;
+  setSoundEnabled: (b: boolean) => void;
+  mutate: (work: () => Promise<{ error: { message: string } | null }>, successMsg: string) => Promise<boolean>;
+}) {
+  const [tab, setTab] = useState<"restaurant" | "billing" | "kitchen" | "notifications" | "system">("restaurant");
+  const [form, setForm] = useState(() => ({
+    name: restaurant.name,
+    phone: restaurant.phone ?? "",
+    whatsapp: restaurant.whatsapp ?? "",
+    address: branch.address ?? "",
+    gstin: branch.gstin ?? "",
+    taxRate: branch.tax_rate,
+    qrEnabled: branch.qr_ordering_enabled,
+    parcelEnabled: branch.parcel_charge_enabled,
+  }));
+
+  async function save() {
+    const supabase = getBrowserSupabase();
+    if (!supabase) return;
+    await mutate(async () => {
+      const res = await supabase.from("branches").update({
+        name: form.name,
+        address: form.address,
+        gstin: form.gstin,
+        tax_rate: form.taxRate,
+        qr_ordering_enabled: form.qrEnabled,
+        parcel_charge_enabled: form.parcelEnabled,
+      }).eq("id", branch.id);
+      return { error: res.error };
+    }, "Settings updated.");
+  }
+
+  return (
+    <div>
+      <div className="view-intro">
+        <div>
+          <p className="eyebrow eyebrow--maroon"><span /> Restaurant Settings</p>
+          <h2>Operational parameters</h2>
+        </div>
+        <button className="primary-admin-button" onClick={() => void save()}>
+          Save Settings
+        </button>
+      </div>
+
+      <div className="settings-tab-bar">
+        {(["restaurant", "billing", "kitchen", "notifications", "system"] as const).map((t) => (
+          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
+            {t.toUpperCase()}
+          </button>
+        ))}
+      </div>
+
+      <div className="settings-panel-container">
+        {tab === "restaurant" && (
+          <section className="admin-card settings-form">
+            <h2>Restaurant Profile</h2>
+            <label>
+              Restaurant Name
+              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </label>
+            <label>
+              Phone Number
+              <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            </label>
+            <label>
+              Address
+              <textarea value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} rows={2} />
+            </label>
+          </section>
+        )}
+
+        {tab === "billing" && (
+          <section className="admin-card settings-form">
+            <h2>Billing & Tax Configuration</h2>
+            <label>
+              GSTIN
+              <input value={form.gstin} onChange={(e) => setForm({ ...form, gstin: e.target.value })} />
+            </label>
+            <label>
+              GST Tax Rate (%)
+              <input type="number" value={form.taxRate} onChange={(e) => setForm({ ...form, taxRate: Number(e.target.value) })} />
+            </label>
+          </section>
+        )}
+
+        {tab === "kitchen" && (
+          <section className="admin-card settings-form">
+            <h2>Kitchen Preferences</h2>
+            <label className="setting-switch">
+              <span>
+                <strong>Biryani Parcel Charge (₹10)</strong>
+                <small>Automatically apply parcel fee for takeaway biryani</small>
+              </span>
+              <input type="checkbox" checked={form.parcelEnabled} onChange={(e) => setForm({ ...form, parcelEnabled: e.target.checked })} />
+              <i />
+            </label>
+          </section>
+        )}
+
+        {tab === "notifications" && (
+          <section className="admin-card settings-form">
+            <h2>Notifications & Sounds</h2>
+            <label className="setting-switch">
+              <span>
+                <strong>Audio Alerts</strong>
+                <small>Play Web Audio chime on new incoming order or request</small>
+              </span>
+              <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
+              <i />
+            </label>
+          </section>
+        )}
+
+        {tab === "system" && (
+          <section className="admin-card settings-form">
+            <h2>System Health</h2>
+            <div className="system-health-list">
+              <div><span>Realtime WebSocket</span><strong>🟢 Connected</strong></div>
+              <div><span>Database Service</span><strong>🟢 Operational</strong></div>
+              <div><span>Timezone</span><strong>Asia/Kolkata</strong></div>
+            </div>
+          </section>
+        )}
+      </div>
+    </div>
+  );
 }
 
-function Analytics() {
-  const dishes = [["Chicken Dum Biryani", 284, "100%"], ["Chicken 65", 192, "68%"], ["Paneer Tikka", 171, "60%"], ["Mutton Dum Biryani", 126, "44%"], ["Veg Fried Rice", 98, "35%"]];
-  return <div><div className="view-intro"><div><p className="eyebrow eyebrow--maroon"><span /> Owner analytics</p><h2>A clearer view of the business.</h2></div><button className="primary-admin-button">This week⌄</button></div><div className="analytics-kpis"><article><span>NET REVENUE</span><strong>₹5.84L</strong><small>↑ 14.8% vs last week</small></article><article><span>ORDERS</span><strong>1,284</strong><small>↑ 9.2% vs last week</small></article><article><span>PEAK HOUR</span><strong>8–9 PM</strong><small>214 orders this week</small></article><article><span>TABLE TURNOVER</span><strong>1h 12m</strong><small>↓ 8m improvement</small></article></div><div className="analytics-grid"><section className="admin-card analytics-revenue"><div className="admin-card__head"><div><h2>Revenue performance</h2><span>Last 7 days</span></div><strong>₹5,84,260</strong></div><BigChart /></section><section className="admin-card popular-dishes"><div className="admin-card__head"><div><h2>Popular dishes</h2><span>By quantity sold</span></div></div>{dishes.map(([name, count, width], i) => <div key={name}><span className="dish-rank">0{i + 1}</span><div><strong>{name}</strong><span><i style={{ width }} /></span></div><b>{count}</b></div>)}</section><section className="admin-card efficiency"><div className="admin-card__head"><div><h2>Kitchen efficiency</h2><span>Average prep time by hour</span></div><strong>18m 42s</strong></div><div className="efficiency-bars">{[34, 44, 58, 72, 93, 81, 66, 42].map((height, i) => <div key={i}><i style={{ height: `${height}%` }} /><span>{5 + i}PM</span></div>)}</div></section></div></div>;
+/* ─────────── Table Details Drawer ─────────── */
+
+function TableDetailsDrawer({
+  table,
+  orders,
+  requests,
+  onClose,
+}: {
+  table: DiningTable;
+  orders: RestaurantOrder[];
+  requests: ServiceRequest[];
+  onClose: () => void;
+}) {
+  return (
+    <div className="admin-drawer-backdrop" onClick={onClose}>
+      <div className="admin-table-drawer" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div>
+            <h2>Table {table.number} Details</h2>
+            <span>{table.capacity} seats · State: {table.state}</span>
+          </div>
+          <button onClick={onClose} aria-label="Close">
+            <X size={20} />
+          </button>
+        </header>
+
+        <div className="drawer-body">
+          {/* Active Orders */}
+          <section className="drawer-section">
+            <h3>Active Orders</h3>
+            {orders.map((o) => (
+              <div key={o.id} className="drawer-order-item">
+                <div className="drawer-order-item__head">
+                  <strong>Order #AT-{o.order_number}</strong>
+                  <span>{o.status}</span>
+                </div>
+                {o.order_items?.map((item) => (
+                  <div key={item.id} className="drawer-order-line">
+                    <span>{item.quantity}× {item.item_name}</span>
+                    <span>{formatCurrency(item.line_total)}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+            {!orders.length && <div className="admin-empty">No active orders for this table.</div>}
+          </section>
+
+          {/* Service Requests */}
+          <section className="drawer-section">
+            <h3>Service Requests</h3>
+            {requests.map((r) => (
+              <div key={r.id} className="drawer-request-item">
+                <span>{r.request_type}</span>
+                <small>{r.status}</small>
+              </div>
+            ))}
+            {!requests.length && <div className="admin-empty">No service requests.</div>}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function SettingsPanel() {
-  return <div><div className="view-intro"><div><p className="eyebrow eyebrow--maroon"><span /> Restaurant settings</p><h2>The details behind the service.</h2></div><button className="primary-admin-button">Save changes</button></div><div className="settings-grid"><section className="admin-card settings-form"><h2>Restaurant profile</h2><label>Restaurant name<input defaultValue="Athidhi Family Restaurant" /></label><label>Phone number<input placeholder="Add the official phone number" /></label><label>Address<textarea placeholder="Add the complete restaurant address" rows={3} /></label><div><label>Opens<input defaultValue="11:00 AM" /></label><label>Closes<input defaultValue="11:00 PM" /></label></div></section><section className="admin-card settings-form"><h2>Ordering preferences</h2><label className="setting-switch"><span><strong>QR table ordering</strong><small>Allow guests to order without signing in</small></span><input type="checkbox" defaultChecked /><i /></label><label className="setting-switch"><span><strong>Parcel charge</strong><small>Add ₹10 to every biryani parcel quantity</small></span><input type="checkbox" defaultChecked /><i /></label><label className="setting-switch"><span><strong>Realtime kitchen alerts</strong><small>Notify the kitchen for each new order</small></span><input type="checkbox" defaultChecked /><i /></label></section></div></div>;
+/* ─────────── Utility Helpers ─────────── */
+
+function tableNumber(order: RestaurantOrder) {
+  return order.table_session?.table?.number ?? "—";
 }
 
-function MiniChart() { return <div className="mini-chart"><div className="chart-y"><span>20K</span><span>10K</span><span>0</span></div><div className="chart-bars">{[22, 31, 38, 28, 49, 62, 74, 91, 70].map((height, i) => <i key={i} style={{ height: `${height}%` }} />)}</div><div className="chart-x"><span>12PM</span><span>3PM</span><span>6PM</span><span>9PM</span></div></div>; }
-function BigChart() { const values = [54, 62, 58, 72, 69, 88, 96]; return <div className="big-chart" aria-label="Revenue trend rising through the week"><div className="big-chart__grid"><i /><i /><i /><i /></div><div className="big-chart__bars">{values.map((value, index) => <div key={index}><i style={{ height: `${value}%` }}><b /></i></div>)}</div><div className="big-chart__days">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => <span key={day}>{day}</span>)}</div></div>; }
+function statusLabel(status: OrderStatus) {
+  return status.charAt(0) + status.slice(1).toLowerCase().replaceAll("_", " ");
+}
+
+function orderMatches(order: RestaurantOrder, search: string) {
+  if (!search) return true;
+  return `${order.order_number} ${tableNumber(order)} ${order.status} ${order.order_items?.map((i) => i.item_name).join(" ")}`
+    .toLowerCase()
+    .includes(search.toLowerCase());
+}
+
+function formatTime(iso: string) {
+  try {
+    return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+function formatLiveClock(timestamp: number) {
+  try {
+    return new Date(timestamp).toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function relativeTime(date: string) {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 60000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`;
+}

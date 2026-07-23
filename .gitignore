@@ -37,8 +37,11 @@ yarn-error.log*
 
 # typescript
 next-env.d.ts
+*.tsbuildinfo
 /dist/
 /.wrangler/
 .devserver.*.log
 /outputs/
 /work/
+/supabase/.branches/
+/supabase/.temp/

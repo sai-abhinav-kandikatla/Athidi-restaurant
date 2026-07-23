@@ -1,4 +1,29 @@
 /* eslint-disable @next/next/no-img-element */
 import { PublicPage } from "../components/public-page";
-const photos = ["photo-1589302168068-964664d93dc0", "photo-1603894584373-5ac82b2ae398", "photo-1565557623262-b51c2513a641", "photo-1567188040759-fb8a883dc6d8", "photo-1631452180519-c014fe946bc7", "photo-1601050690597-df0568f70950"];
-export default function GalleryPage() { return <PublicPage eyebrow="From our kitchen" title="A feast for every sense." intro="A closer look at the colours, craft and warmth of Athidhi."><div className="public-gallery">{photos.map((photo, index) => <img key={photo} src={`https://images.unsplash.com/${photo}?auto=format&fit=crop&w=1000&q=85`} alt={`Athidhi dining and food moment ${index + 1}`} />)}</div></PublicPage>; }
+import { getPublicRestaurantData } from "../lib/supabase/public-data";
+
+export const dynamic = "force-dynamic";
+
+export default async function GalleryPage() {
+  const data = await getPublicRestaurantData();
+  const photos = data.items.filter((item) => item.image_url).slice(0, 8);
+  return (
+    <PublicPage
+      eyebrow="From our kitchen"
+      title="A feast for every sense."
+      intro="A closer look at the dishes currently served at Athidhi."
+    >
+      <div className="public-gallery">
+        {photos.map((item) => (
+          <img key={item.id} src={item.image_url!} alt={item.name} />
+        ))}
+      </div>
+      {!photos.length && (
+        <div className="empty-state">
+          <h3>Kitchen photos are being prepared.</h3>
+          <p>The live menu remains available while the gallery is updated.</p>
+        </div>
+      )}
+    </PublicPage>
+  );
+}
