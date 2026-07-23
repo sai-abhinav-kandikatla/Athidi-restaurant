@@ -39,7 +39,6 @@ import type {
   StaffIdentity,
 } from "../lib/restaurant-types";
 import { Brand } from "./brand";
-import { getBrowserSupabase } from "../lib/supabase/client";
 
 /* ─────────── Types ─────────── */
 
