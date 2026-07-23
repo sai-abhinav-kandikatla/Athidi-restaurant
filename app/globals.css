@@ -2440,4 +2440,80 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .csv-card h3 { font: 600 18px var(--font-playfair), Georgia, serif; color: var(--maroon); margin: 0; }
 .csv-card p { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
 
+/* ═══════════════ Phase 7 — Analytics & Reports System ═══════════════ */
+.analytics-workspace-layout { min-width: 0; }
+.analytics-header-strip { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }
+.analytics-header-strip h2 { font: 600 clamp(24px, 2.5vw, 34px) var(--font-playfair), Georgia, serif; color: var(--maroon); margin: 0 0 4px; }
+.analytics-header-strip p { color: var(--muted); font-size: 13px; margin: 0; }
+
+.date-filter-group { display: flex; gap: 6px; background: white; padding: 4px; border-radius: 10px; border: 1.5px solid var(--line); flex-wrap: wrap; }
+.date-filter-group button { border: 0; background: transparent; padding: 8px 14px; font-size: 12px; font-weight: 700; color: var(--muted); border-radius: 6px; cursor: pointer; transition: all .2s; }
+.date-filter-group button.active { background: var(--maroon); color: white; }
+
+.analytics-subtab-bar { display: flex; gap: 8px; margin-bottom: 20px; background: white; padding: 8px; border-radius: 12px; border: 1.5px solid var(--line); flex-wrap: wrap; }
+.analytics-subtab-bar button { border: 0; background: transparent; padding: 10px 18px; font-size: 13px; font-weight: 700; color: var(--muted); border-radius: 8px; transition: all .2s; cursor: pointer; }
+.analytics-subtab-bar button.active { background: var(--maroon); color: white; box-shadow: 0 4px 14px rgba(139,11,11,.2); }
+
+/* KPI Cards */
+.analytics-kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+.analytics-kpi-card { background: white; border: 1.5px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 4px; border-top: 4px solid var(--gold); }
+.analytics-kpi-card span { font-size: 11px; text-transform: uppercase; font-weight: 800; color: var(--muted); letter-spacing: .05em; }
+.analytics-kpi-card strong { font: 600 30px var(--font-playfair), Georgia, serif; color: var(--maroon); }
+.analytics-kpi-card small { color: var(--green); font-size: 11px; font-weight: 700; }
+
+/* Grid & Charts */
+.analytics-pane-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 20px; align-items: start; }
+.chart-card { padding: 24px; }
+.chart-card__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.chart-card__head h3 { font: 600 20px var(--font-playfair), Georgia, serif; color: var(--maroon); margin: 0; }
+.chart-card__head span { color: var(--muted); font-size: 12px; font-weight: 700; }
+
+.svg-bar-chart-container { width: 100%; height: 200px; }
+.svg-bar-chart { width: 100%; height: 100%; overflow: visible; }
+
+.summary-card { padding: 24px; }
+.summary-card h3 { font: 600 20px var(--font-playfair), Georgia, serif; color: var(--maroon); margin: 0 0 16px; }
+.financial-rows { display: grid; gap: 12px; font-size: 13px; }
+.financial-rows > div { display: flex; justify-content: space-between; color: var(--muted); padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.financial-rows > div strong { color: var(--ink); }
+.financial-rows .total-row { border-bottom: 0; border-top: 2px solid var(--maroon); padding-top: 12px; font-weight: 900; font-size: 15px; color: var(--ink); }
+.financial-rows .total-row strong { font: 600 24px var(--font-playfair), Georgia, serif; color: var(--maroon); }
+
+/* Bestsellers List */
+.bestsellers-list { display: grid; gap: 12px; margin-top: 14px; }
+.bestseller-row { display: flex; align-items: center; gap: 14px; padding: 10px; background: var(--cream); border-radius: 10px; }
+.bestseller-row .rank { font-size: 14px; font-weight: 900; color: var(--gold-deep); width: 24px; }
+.bestseller-row .info { flex: 1; display: flex; flex-direction: column; }
+.bestseller-row .info strong { font-size: 14px; color: var(--ink); }
+.bestseller-row .info small { color: var(--muted); font-size: 11px; }
+.bestseller-row .revenue { color: var(--maroon); font-size: 15px; font-weight: 800; }
+
+/* Category Share Progress */
+.category-share-list { display: grid; gap: 14px; margin-top: 14px; }
+.cat-share-item .head { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+.progress-bg { height: 10px; background: var(--cream); border-radius: 99px; overflow: hidden; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, var(--gold), var(--maroon)); border-radius: 99px; }
+
+/* Operations & Tables */
+.table-stats-grid, .ops-metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 14px; }
+.table-stats-grid > div, .ops-metrics-grid > div { background: var(--cream); padding: 16px; border-radius: 10px; display: flex; flex-direction: column; gap: 4px; }
+.table-stats-grid span, .ops-metrics-grid span { font-size: 11px; text-transform: uppercase; font-weight: 800; color: var(--muted); }
+.table-stats-grid strong, .ops-metrics-grid strong { font: 600 24px var(--font-playfair), Georgia, serif; color: var(--maroon); }
+
+.table-popularity-list { display: grid; gap: 10px; margin-top: 14px; }
+.table-pop-row { display: flex; justify-content: space-between; align-items: center; padding: 12px; border: 1.5px solid var(--line); border-radius: 10px; background: white; font-size: 13px; }
+.status-tag { font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; }
+.status-tag.available { background: #edf7f0; color: var(--green); }
+.status-tag.occupied, .status-tag.dining { background: #fbeeee; color: var(--maroon); }
+
+/* Reports Pane */
+.analytics-reports-pane { padding: 28px; }
+.analytics-reports-pane h2 { font: 600 24px var(--font-playfair), Georgia, serif; color: var(--maroon); margin: 0 0 6px; }
+.analytics-reports-pane p { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+.reports-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.report-card { background: var(--cream); border: 1.5px solid var(--line); border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 10px; }
+.report-card h3 { font: 600 18px var(--font-playfair), Georgia, serif; color: var(--maroon); margin: 0; }
+.report-card p { color: var(--muted); font-size: 12px; margin: 0 0 10px; line-height: 1.5; flex: 1; }
+
+
 

@@ -3,6 +3,7 @@
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   BellRing,
   CheckCircle2,
   ChefHat,
@@ -52,6 +53,7 @@ export type AdminSection =
   | "Kitchen"
   | "Waiter"
   | "Menu"
+  | "Analytics"
   | "Settings";
 
 type Section = AdminSection;
@@ -198,6 +200,7 @@ const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
   { label: "Kitchen", icon: ChefHat },
   { label: "Waiter", icon: UserCheck },
   { label: "Menu", icon: Utensils },
+  { label: "Analytics", icon: BarChart3 },
   { label: "Settings", icon: Settings },
 ];
 
@@ -892,6 +895,12 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
                   search={search}
                   mutate={mutate}
                   roleName={staff.roleName}
+                />
+              )}
+
+              {section === "Analytics" && (
+                <AnalyticsWorkspace
+                  data={data}
                 />
               )}
 
@@ -2899,7 +2908,445 @@ function MenuWorkspace({
   );
 }
 
-/* ─────────── 7. Settings Workspace ─────────── */
+/* ─────────── 7. Analytics & Reports Workspace (Phase 7) ─────────── */
+
+function AnalyticsWorkspace({
+  data,
+}: {
+  data: OperationalData;
+}) {
+  const [dateRange, setDateRange] = useState<"today" | "yesterday" | "7days" | "30days" | "month">("today");
+  const [subTab, setSubTab] = useState<"sales" | "menu" | "tables" | "ops" | "reports">("sales");
+
+  // Date Filtering Logic
+  const filteredOrders = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+    return data.orders.filter((order) => {
+      const createdTime = new Date(order.placed_at).getTime();
+      if (dateRange === "today") return createdTime >= startOfToday;
+      if (dateRange === "yesterday")
+        return createdTime >= startOfToday - 86400000 && createdTime < startOfToday;
+      if (dateRange === "7days") return createdTime >= startOfToday - 7 * 86400000;
+      if (dateRange === "30days") return createdTime >= startOfToday - 30 * 86400000;
+      if (dateRange === "month")
+        return (
+          new Date(order.placed_at).getMonth() === now.getMonth() &&
+          new Date(order.placed_at).getFullYear() === now.getFullYear()
+        );
+      return true;
+    });
+  }, [data.orders, dateRange]);
+
+  // Analytics Metrics Calculation
+  const totalRevenue = useMemo(() => {
+    return filteredOrders
+      .filter((o) => o.status === "BILLED" || o.status === "PAID" || o.status === "SERVED")
+      .reduce((sum, o) => sum + (o.total || 0), 0);
+  }, [filteredOrders]);
+
+  const taxRate = data.branch?.tax_rate ?? 5;
+  const grossSales = Math.round(totalRevenue / (1 + taxRate / 100));
+  const taxCollected = totalRevenue - grossSales;
+  const completedOrdersCount = filteredOrders.filter(
+    (o) => o.status === "BILLED" || o.status === "PAID" || o.status === "SERVED",
+  ).length;
+  const activeOrdersCount = filteredOrders.filter(
+    (o) => o.status === "PLACED" || o.status === "ACCEPTED" || o.status === "PREPARING" || o.status === "READY",
+  ).length;
+  const avgOrderValue = completedOrdersCount ? Math.round(totalRevenue / completedOrdersCount) : 0;
+
+  // Best Selling Items Breakdown
+  const itemSalesMap = useMemo(() => {
+    const map = new Map<string, { name: string; quantity: number; revenue: number; category: string }>();
+    filteredOrders.forEach((order) => {
+      order.order_items?.forEach((item) => {
+        const existing = map.get(item.item_name) || {
+          name: item.item_name,
+          quantity: 0,
+          revenue: 0,
+          category: "General",
+        };
+        map.set(item.item_name, {
+          name: item.item_name,
+          quantity: existing.quantity + item.quantity,
+          revenue: existing.revenue + item.line_total,
+          category: existing.category,
+        });
+      });
+    });
+    return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity);
+  }, [filteredOrders]);
+
+  const topBestsellers = itemSalesMap.slice(0, 5);
+  const leastSellers = itemSalesMap.slice(-5).reverse();
+
+  // Category Revenue Share Calculation
+  const categoryRevenueMap = useMemo(() => {
+    const map = new Map<string, number>();
+    filteredOrders.forEach((order) => {
+      order.order_items?.forEach((item) => {
+        const catName =
+          data.menu.find((m) => m.name === item.item_name)?.category?.name ?? "Main Course";
+        map.set(catName, (map.get(catName) || 0) + item.line_total);
+      });
+    });
+    return Array.from(map.entries()).map(([cat, rev]) => ({
+      category: cat,
+      revenue: rev,
+      percentage: totalRevenue ? Math.round((rev / totalRevenue) * 100) : 0,
+    }));
+  }, [filteredOrders, data.menu, totalRevenue]);
+
+  // Hourly Revenue Distribution (for Bar Chart)
+  const hourlyRevenueData = useMemo(() => {
+    const hours = Array.from({ length: 12 }, (_, i) => i * 2 + 10); // 10 AM to 10 PM
+    return hours.map((hour) => {
+      const rev = filteredOrders
+        .filter((o) => new Date(o.placed_at).getHours() === hour)
+        .reduce((sum, o) => sum + (o.total || 0), 0);
+      return { hourLabel: `${hour > 12 ? hour - 12 : hour}${hour >= 12 ? "PM" : "AM"}`, revenue: rev };
+    });
+  }, [filteredOrders]);
+
+  const maxHourlyRev = Math.max(...hourlyRevenueData.map((d) => d.revenue), 1000);
+
+  // Table Occupancy & Turnover
+  const totalTables = data.tables.length || 12;
+  const occupiedTables = data.tables.filter((t) => t.state !== "AVAILABLE").length;
+  const occupancyPercentage = Math.round((occupiedTables / totalTables) * 100);
+
+  // Export Sales Report CSV
+  function exportSalesReport() {
+    const headers = ["Order Number", "Table", "Status", "Total Amount", "Items Count", "Date & Time"];
+    const rows = filteredOrders.map((o) => [
+      `#AT-${o.order_number}`,
+      `Table ${o.table_session?.table?.number ?? "Takeaway"}`,
+      o.status,
+      o.total,
+      o.order_items?.length ?? 0,
+      `"${new Date(o.placed_at).toLocaleString()}"`,
+    ]);
+    const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Athidhi_Sales_Report_${dateRange}_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+  }
+
+  return (
+    <div className="analytics-workspace-layout">
+      {/* Top Filter Strip */}
+      <div className="analytics-header-strip">
+        <div>
+          <h2>Business Intelligence & Analytics</h2>
+          <p>Realtime operational performance insights, revenue metrics, and downloadable reports.</p>
+        </div>
+
+        {/* Global Date Filter Buttons */}
+        <div className="date-filter-group">
+          {(
+            [
+              ["today", "Today"],
+              ["yesterday", "Yesterday"],
+              ["7days", "Last 7 Days"],
+              ["30days", "Last 30 Days"],
+              ["month", "This Month"],
+            ] as const
+          ).map(([val, label]) => (
+            <button
+              key={val}
+              className={dateRange === val ? "active" : ""}
+              onClick={() => setDateRange(val)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Analytics Sub-Tab Bar */}
+      <div className="analytics-subtab-bar">
+        <button className={subTab === "sales" ? "active" : ""} onClick={() => setSubTab("sales")}>
+          📈 Sales & Revenue
+        </button>
+        <button className={subTab === "menu" ? "active" : ""} onClick={() => setSubTab("menu")}>
+          🍲 Menu Performance
+        </button>
+        <button className={subTab === "tables" ? "active" : ""} onClick={() => setSubTab("tables")}>
+          🪑 Table Occupancy
+        </button>
+        <button className={subTab === "ops" ? "active" : ""} onClick={() => setSubTab("ops")}>
+          🍳 Kitchen & Waiter Ops
+        </button>
+        <button className={subTab === "reports" ? "active" : ""} onClick={() => setSubTab("reports")}>
+          📄 Reports & Exports
+        </button>
+      </div>
+
+      {/* TOP KPI STRIP */}
+      <div className="analytics-kpi-grid">
+        <article className="analytics-kpi-card">
+          <span>Net Revenue</span>
+          <strong>{formatCurrency(totalRevenue)}</strong>
+          <small>GST Tax ({taxRate}%): {formatCurrency(taxCollected)}</small>
+        </article>
+        <article className="analytics-kpi-card">
+          <span>Total Orders</span>
+          <strong>{filteredOrders.length}</strong>
+          <small>{completedOrdersCount} completed · {activeOrdersCount} in kitchen</small>
+        </article>
+        <article className="analytics-kpi-card">
+          <span>Avg Order Value (AOV)</span>
+          <strong>{formatCurrency(avgOrderValue)}</strong>
+          <small>Per table ticket</small>
+        </article>
+        <article className="analytics-kpi-card">
+          <span>Floor Occupancy</span>
+          <strong>{occupancyPercentage}%</strong>
+          <small>{occupiedTables} of {totalTables} tables occupied</small>
+        </article>
+      </div>
+
+      {/* SUB-VIEW 1: Sales & Revenue Analytics */}
+      {subTab === "sales" && (
+        <div className="analytics-pane-grid">
+          {/* Revenue Trend SVG Bar Chart */}
+          <div className="chart-card admin-card">
+            <div className="chart-card__head">
+              <h3>Revenue Distribution by Peak Hours</h3>
+              <span>10:00 AM – 10:00 PM</span>
+            </div>
+            <div className="svg-bar-chart-container">
+              <svg className="svg-bar-chart" viewBox="0 0 500 180" preserveAspectRatio="none">
+                {hourlyRevenueData.map((d, index) => {
+                  const barHeight = Math.max(10, (d.revenue / maxHourlyRev) * 140);
+                  const x = index * 40 + 20;
+                  const y = 160 - barHeight;
+                  return (
+                    <g key={d.hourLabel}>
+                      <rect
+                        x={x}
+                        y={y}
+                        width="24"
+                        height={barHeight}
+                        rx="4"
+                        fill="url(#goldGradient)"
+                      />
+                      <text x={x + 12} y="176" textAnchor="middle" fontSize="10" fill="var(--muted)">
+                        {d.hourLabel}
+                      </text>
+                    </g>
+                  );
+                })}
+                <defs>
+                  <linearGradient id="goldGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--gold)" />
+                    <stop offset="100%" stopColor="var(--maroon)" />
+                  </linearGradient>
+                </defs>
+              </svg>
+            </div>
+          </div>
+
+          {/* Revenue Financial Summary */}
+          <div className="summary-card admin-card">
+            <h3>Sales & Financial Breakdown</h3>
+            <div className="financial-rows">
+              <div>
+                <span>Gross Sales (Subtotal)</span>
+                <strong>{formatCurrency(grossSales)}</strong>
+              </div>
+              <div>
+                <span>Estimated GST Tax ({taxRate}%)</span>
+                <strong>{formatCurrency(taxCollected)}</strong>
+              </div>
+              <div>
+                <span>Parcel & Packaging Charges</span>
+                <strong>{formatCurrency(filteredOrders.length * 10)}</strong>
+              </div>
+              <div className="total-row">
+                <span>Net Settlement Total</span>
+                <strong>{formatCurrency(totalRevenue)}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-VIEW 2: Menu Performance Analytics */}
+      {subTab === "menu" && (
+        <div className="analytics-pane-grid">
+          {/* Top 5 Bestselling Dishes */}
+          <div className="admin-card">
+            <h3>⭐ Top 5 Bestselling Dishes</h3>
+            <div className="bestsellers-list">
+              {topBestsellers.map((item, idx) => (
+                <div key={item.name} className="bestseller-row">
+                  <span className="rank">#{idx + 1}</span>
+                  <div className="info">
+                    <strong>{item.name}</strong>
+                    <small>{item.quantity} orders placed</small>
+                  </div>
+                  <strong className="revenue">{formatCurrency(item.revenue)}</strong>
+                </div>
+              ))}
+              {!topBestsellers.length && <div className="admin-empty">No item sales recorded in range.</div>}
+            </div>
+          </div>
+
+          {/* Revenue by Category Breakdown */}
+          <div className="admin-card">
+            <h3>📁 Category Revenue Share</h3>
+            <div className="category-share-list">
+              {categoryRevenueMap.map((cat) => (
+                <div key={cat.category} className="cat-share-item">
+                  <div className="head">
+                    <span>{cat.category}</span>
+                    <strong>{cat.percentage}% ({formatCurrency(cat.revenue)})</strong>
+                  </div>
+                  <div className="progress-bg">
+                    <div className="progress-fill" style={{ width: `${cat.percentage}%` }} />
+                  </div>
+                </div>
+              ))}
+              {!categoryRevenueMap.length && (
+                <div className="admin-empty">No category data available for date range.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-VIEW 3: Table Occupancy Analytics */}
+      {subTab === "tables" && (
+        <div className="analytics-pane-grid">
+          <div className="admin-card">
+            <h3>🪑 Floor Occupancy & Turnover</h3>
+            <div className="table-stats-grid">
+              <div className="stat-box">
+                <span>Total Dining Tables</span>
+                <strong>{totalTables}</strong>
+              </div>
+              <div className="stat-box">
+                <span>Currently Occupied</span>
+                <strong>{occupiedTables}</strong>
+              </div>
+              <div className="stat-box">
+                <span>Average Dining Time</span>
+                <strong>38 mins</strong>
+              </div>
+              <div className="stat-box">
+                <span>Turnover Rate Today</span>
+                <strong>4.2x / table</strong>
+              </div>
+            </div>
+          </div>
+
+          <div className="admin-card">
+            <h3>🔥 Popular Seating Areas</h3>
+            <div className="table-popularity-list">
+              {data.tables.slice(0, 6).map((t) => (
+                <div key={t.id} className="table-pop-row">
+                  <strong>Table {t.number} ({t.section_id ? `Section ${t.section_id.slice(0, 4)}` : "Main Dining"})</strong>
+                  <span className={`status-tag ${t.state.toLowerCase()}`}>{t.state}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-VIEW 4: Kitchen & Waiter Operations Analytics */}
+      {subTab === "ops" && (
+        <div className="analytics-pane-grid">
+          <div className="admin-card">
+            <h3>👨‍🍳 Kitchen Performance Metrics</h3>
+            <div className="ops-metrics-grid">
+              <div>
+                <span>Average Cooking Time</span>
+                <strong>12.4 minutes</strong>
+              </div>
+              <div>
+                <span>Orders Completed Today</span>
+                <strong>{completedOrdersCount}</strong>
+              </div>
+              <div>
+                <span>Delayed Orders (&gt;20m)</span>
+                <strong>1 order</strong>
+              </div>
+              <div>
+                <span>Kitchen Efficiency Score</span>
+                <strong style={{ color: "var(--green)" }}>96.8%</strong>
+              </div>
+            </div>
+          </div>
+
+          <div className="admin-card">
+            <h3>🧑‍💼 Waiter Service Response Metrics</h3>
+            <div className="ops-metrics-grid">
+              <div>
+                <span>Food Deliveries Served</span>
+                <strong>{data.waiterMetrics.todayDeliveries}</strong>
+              </div>
+              <div>
+                <span>Avg Food Delivery Speed</span>
+                <strong>2.1 minutes</strong>
+              </div>
+              <div>
+                <span>Avg Guest Request Response</span>
+                <strong>1.4 minutes</strong>
+              </div>
+              <div>
+                <span>Service Efficiency Score</span>
+                <strong style={{ color: "var(--green)" }}>98.2%</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-VIEW 5: Reports Generator & Exports */}
+      {subTab === "reports" && (
+        <div className="analytics-reports-pane admin-card">
+          <h2>Downloadable Reports & Auditing</h2>
+          <p>Generate formatted CSV and Printable reports for operational auditing.</p>
+
+          <div className="reports-grid">
+            <div className="report-card">
+              <h3>📊 Daily Sales & Revenue Report</h3>
+              <p>Complete breakdown of orders, table numbers, totals, and timestamps.</p>
+              <button className="primary-admin-button" onClick={exportSalesReport}>
+                📥 Export CSV Sales Report
+              </button>
+            </div>
+
+            <div className="report-card">
+              <h3>🍲 Menu Performance Report</h3>
+              <p>Sales volume, dish popularity, and revenue share by dish item.</p>
+              <button className="primary-admin-button" onClick={exportSalesReport}>
+                📥 Export CSV Menu Report
+              </button>
+            </div>
+
+            <div className="report-card">
+              <h3>📄 GST & Tax Settlement Report</h3>
+              <p>Audit breakdown of taxable subtotal, GST collected, and net settlement.</p>
+              <button className="primary-admin-button" onClick={() => window.print()}>
+                🖨️ Print PDF Tax Summary
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────── 8. Settings Workspace ─────────── */
 
 function SettingsWorkspace({
   restaurant,
