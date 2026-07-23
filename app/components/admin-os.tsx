@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   BarChart3,
   BellRing,
+  Building2,
   CheckCircle2,
   ChefHat,
   ChevronRight,
@@ -54,6 +55,7 @@ export type AdminSection =
   | "Waiter"
   | "Menu"
   | "Analytics"
+  | "Enterprise"
   | "Settings";
 
 type Section = AdminSection;
@@ -201,6 +203,7 @@ const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
   { label: "Waiter", icon: UserCheck },
   { label: "Menu", icon: Utensils },
   { label: "Analytics", icon: BarChart3 },
+  { label: "Enterprise", icon: Building2 },
   { label: "Settings", icon: Settings },
 ];
 
@@ -900,6 +903,12 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
 
               {section === "Analytics" && (
                 <AnalyticsWorkspace
+                  data={data}
+                />
+              )}
+
+              {section === "Enterprise" && (
+                <EnterpriseWorkspace
                   data={data}
                 />
               )}
@@ -3346,7 +3355,593 @@ function AnalyticsWorkspace({
   );
 }
 
-/* ─────────── 8. Settings Workspace ─────────── */
+/* ─────────── 8. Enterprise Management System (Phase 8) ─────────── */
+
+function EnterpriseWorkspace({
+  data,
+}: {
+  data: OperationalData;
+}) {
+  const [tab, setTab] = useState<
+    | "staff"
+    | "shifts"
+    | "inventory"
+    | "suppliers"
+    | "purchase_orders"
+    | "reservations"
+    | "loyalty"
+    | "coupons"
+    | "feedback"
+    | "branches"
+  >("staff");
+
+  // Local State for Enterprise Modules
+  const [staffList, setStaffList] = useState([
+    { id: "st-1", name: "Sai Abhinav", role: "OWNER", email: "saiabhinavkandikatla@gmail.com", phone: "+91 98765 43210", status: "Active", shift: "Morning" },
+    { id: "st-2", name: "Ramesh Kumar", role: "MANAGER", email: "ramesh@athidhi.com", phone: "+91 98765 43211", status: "Active", shift: "Morning" },
+    { id: "st-3", name: "Srinivas V", role: "CHEF", email: "srinivas@athidhi.com", phone: "+91 98765 43212", status: "Active", shift: "Evening" },
+    { id: "st-4", name: "Venkat R", role: "WAITER", email: "venkat@athidhi.com", phone: "+91 98765 43213", status: "Active", shift: "Evening" },
+    { id: "st-5", name: "Anitha K", role: "CASHIER", email: "anitha@athidhi.com", phone: "+91 98765 43214", status: "Active", shift: "Morning" },
+  ]);
+
+  const [inventory, setInventory] = useState([
+    { id: "inv-1", name: "Basmati Biryani Rice", category: "Grains", stock: 45, minStock: 20, unit: "kg", cost: 110, status: "Normal" },
+    { id: "inv-2", name: "Fresh Raw Chicken", category: "Poultry", stock: 28, minStock: 15, unit: "kg", cost: 220, status: "Normal" },
+    { id: "inv-3", name: "Fresh Mutton Cuts", category: "Meat", stock: 12, minStock: 15, unit: "kg", cost: 750, status: "Low Stock" },
+    { id: "inv-4", name: "Pure Cow Ghee", category: "Dairy", stock: 8, minStock: 10, unit: "Liters", cost: 650, status: "Low Stock" },
+    { id: "inv-5", name: "Biryani Spices Mix", category: "Spices", stock: 18, minStock: 5, unit: "kg", cost: 450, status: "Normal" },
+  ]);
+
+  const [reservations, setReservations] = useState([
+    { id: "res-1", guestName: "Anand Kumar", phone: "+91 99887 76655", guests: 4, date: "Today", time: "7:30 PM", tableNumber: 4, status: "CONFIRMED" },
+    { id: "res-2", guestName: "Priya Sharma", phone: "+91 99887 76644", guests: 2, date: "Today", time: "8:00 PM", tableNumber: 8, status: "SEATED" },
+    { id: "res-3", guestName: "Vikram Reddy", phone: "+91 99887 76633", guests: 6, date: "Today", time: "8:30 PM", tableNumber: 12, status: "CONFIRMED" },
+  ]);
+
+  const [coupons, setCoupons] = useState([
+    { id: "coup-1", code: "WELCOME10", discount: "10% Off", minSpend: 499, status: "Active", validTill: "31 Dec 2026" },
+    { id: "coup-2", code: "ATHIDHI15", discount: "15% Off", minSpend: 999, status: "Active", validTill: "31 Dec 2026" },
+    { id: "coup-3", code: "BIRYANI100", discount: "Flat ₹100 Off", minSpend: 799, status: "Active", validTill: "31 Dec 2026" },
+  ]);
+
+  const [feedback, setFeedback] = useState([
+    { id: "fb-1", guest: "Rohan V.", rating: 5, comment: "Authentic Dum Biryani flavor! Excellent staff service.", date: "Today", status: "RESOLVED" },
+    { id: "fb-2", guest: "Deepa N.", rating: 4, comment: "Food was delicious. Table service took 5 mins extra.", date: "Yesterday", status: "PENDING" },
+  ]);
+
+  // Modal / Drawer Form States
+  const [modalType, setModalType] = useState<"staff" | "inventory" | "reservation" | "coupon" | null>(null);
+  const [staffForm, setStaffForm] = useState({ name: "", role: "WAITER", email: "", phone: "", shift: "Morning" });
+  const [invForm, setInvForm] = useState({ name: "", category: "General", stock: 10, minStock: 5, unit: "kg", cost: 100 });
+  const [resForm, setResForm] = useState({ guestName: "", phone: "", guests: 2, date: "Today", time: "7:30 PM", tableNumber: 1 });
+
+  const lowStockCount = inventory.filter((i) => i.stock <= i.minStock).length;
+
+  return (
+    <div className="enterprise-workspace-layout">
+      {/* Top Banner Strip */}
+      <div className="enterprise-header-strip">
+        <div>
+          <h2>Enterprise Operations Suite</h2>
+          <p>Back-office management: Staff, Inventory, Reservations, Suppliers, Coupons, and Multi-Branch Setup.</p>
+        </div>
+        {lowStockCount > 0 && (
+          <div className="alert-pill warning">
+            ⚠️ {lowStockCount} Inventory items low in stock
+          </div>
+        )}
+      </div>
+
+      {/* 10 Enterprise Sub-Tabs Navigation */}
+      <div className="enterprise-subtab-bar">
+        <button className={tab === "staff" ? "active" : ""} onClick={() => setTab("staff")}>
+          👥 Staff ({staffList.length})
+        </button>
+        <button className={tab === "shifts" ? "active" : ""} onClick={() => setTab("shifts")}>
+          ⏰ Shifts
+        </button>
+        <button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}>
+          📦 Inventory {lowStockCount > 0 ? `(${lowStockCount} Low)` : ""}
+        </button>
+        <button className={tab === "suppliers" ? "active" : ""} onClick={() => setTab("suppliers")}>
+          🚚 Suppliers
+        </button>
+        <button className={tab === "purchase_orders" ? "active" : ""} onClick={() => setTab("purchase_orders")}>
+          📋 Purchase Orders
+        </button>
+        <button className={tab === "reservations" ? "active" : ""} onClick={() => setTab("reservations")}>
+          📅 Bookings ({reservations.length})
+        </button>
+        <button className={tab === "loyalty" ? "active" : ""} onClick={() => setTab("loyalty")}>
+          🎁 Loyalty
+        </button>
+        <button className={tab === "coupons" ? "active" : ""} onClick={() => setTab("coupons")}>
+          🏷️ Coupons
+        </button>
+        <button className={tab === "feedback" ? "active" : ""} onClick={() => setTab("feedback")}>
+          ⭐ Reviews
+        </button>
+        <button className={tab === "branches" ? "active" : ""} onClick={() => setTab("branches")}>
+          🏢 Branch Setup
+        </button>
+      </div>
+
+      {/* MODULE 1: Staff Management */}
+      {tab === "staff" && (
+        <div className="enterprise-module-pane">
+          <div className="pane-header">
+            <h3>Staff Roster & Access Control</h3>
+            <button className="primary-admin-button" onClick={() => setModalType("staff")}>
+              + Add Employee
+            </button>
+          </div>
+          <div className="admin-table-container">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Role</th>
+                  <th>Contact</th>
+                  <th>Shift</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {staffList.map((emp) => (
+                  <tr key={emp.id}>
+                    <td>
+                      <strong>{emp.name}</strong>
+                    </td>
+                    <td>
+                      <span className={`role-badge ${emp.role.toLowerCase()}`}>{emp.role}</span>
+                    </td>
+                    <td>
+                      <div>{emp.email}</div>
+                      <small>{emp.phone}</small>
+                    </td>
+                    <td>{emp.shift}</td>
+                    <td>
+                      <span className={`status-pill ${emp.status.toLowerCase()}`}>{emp.status}</span>
+                    </td>
+                    <td>
+                      <button
+                        className="secondary-btn-sm"
+                        onClick={() => {
+                          setStaffList(
+                            staffList.map((s) =>
+                              s.id === emp.id ? { ...s, status: s.status === "Active" ? "Inactive" : "Active" } : s,
+                            ),
+                          );
+                        }}
+                      >
+                        {emp.status === "Active" ? "Deactivate" : "Activate"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODULE 2: Shift Roster */}
+      {tab === "shifts" && (
+        <div className="enterprise-module-pane">
+          <h3>Active Shifts & Timings</h3>
+          <div className="shifts-grid">
+            {[
+              ["Morning Shift", "8:00 AM – 4:00 PM", "2 Staff Active", "Sai Abhinav, Ramesh Kumar"],
+              ["Afternoon Shift", "12:00 PM – 8:00 PM", "3 Staff Active", "Anitha K, Venkat R"],
+              ["Evening Shift", "4:00 PM – 12:00 AM", "2 Staff Active", "Srinivas V, Venkat R"],
+              ["Night Shift", "8:00 PM – 4:00 AM", "On Standby", "Kitchen Cleaners"],
+            ].map(([title, time, count, names]) => (
+              <div key={title} className="shift-card admin-card">
+                <h4>{title}</h4>
+                <p className="time">⏱ {time}</p>
+                <div className="count">{count}</div>
+                <small>Assigned: {names}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* MODULE 3: Inventory Management */}
+      {tab === "inventory" && (
+        <div className="enterprise-module-pane">
+          <div className="pane-header">
+            <h3>Inventory & Stock Control</h3>
+            <button className="primary-admin-button" onClick={() => setModalType("inventory")}>
+              + Add Ingredient
+            </button>
+          </div>
+          <div className="admin-table-container">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Ingredient</th>
+                  <th>Category</th>
+                  <th>Stock Level</th>
+                  <th>Min Threshold</th>
+                  <th>Unit Cost</th>
+                  <th>Alert Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {inventory.map((inv) => (
+                  <tr key={inv.id} className={inv.stock <= inv.minStock ? "row-low-stock" : ""}>
+                    <td>
+                      <strong>{inv.name}</strong>
+                    </td>
+                    <td>{inv.category}</td>
+                    <td>
+                      <strong>
+                        {inv.stock} {inv.unit}
+                      </strong>
+                    </td>
+                    <td>
+                      {inv.minStock} {inv.unit}
+                    </td>
+                    <td>{formatCurrency(inv.cost)} / {inv.unit}</td>
+                    <td>
+                      <span className={`stock-status-badge ${inv.stock <= inv.minStock ? "low" : "normal"}`}>
+                        {inv.stock <= inv.minStock ? "⚠️ Low Stock" : "✅ Normal"}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        className="secondary-btn-sm"
+                        onClick={() => {
+                          const add = Number(prompt(`Add stock for ${inv.name} (${inv.unit}):`, "10"));
+                          if (add) {
+                            setInventory(
+                              inventory.map((i) => (i.id === inv.id ? { ...i, stock: i.stock + add } : i)),
+                            );
+                          }
+                        }}
+                      >
+                        + Restock
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODULE 4: Suppliers */}
+      {tab === "suppliers" && (
+        <div className="enterprise-module-pane">
+          <h3>Supplier Directory</h3>
+          <div className="suppliers-grid">
+            {[
+              ["Sri Lakshmi Rice Mill", "P. Venkateswarlu", "+91 94401 23456", "Basmati & Sona Masuri Rice", "GSTIN: 37AAAAA0000A1Z5"],
+              ["Guntur Poultry & Meats", "K. Nageswara Rao", "+91 94401 23457", "Fresh Tender Chicken & Mutton", "GSTIN: 37BBBBB0000B1Z4"],
+              ["Heritage Dairy Products", "R. Swamy", "+91 94401 23458", "Milk, Curd, Paneer, Ghee", "GSTIN: 37CCCCC0000C1Z3"],
+            ].map(([company, contact, phone, supply, gstin]) => (
+              <div key={company} className="supplier-card admin-card">
+                <h4>{company}</h4>
+                <p>Contact: <strong>{contact}</strong> ({phone})</p>
+                <small>Supplies: {supply}</small>
+                <div className="gstin">{gstin}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* MODULE 5: Purchase Orders */}
+      {tab === "purchase_orders" && (
+        <div className="enterprise-module-pane">
+          <h3>Purchase Orders (PO)</h3>
+          <div className="admin-table-container">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>PO #</th>
+                  <th>Supplier</th>
+                  <th>Items</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>#PO-104</td>
+                  <td>Sri Lakshmi Rice Mill</td>
+                  <td>100 kg Biryani Rice</td>
+                  <td>{formatCurrency(11000)}</td>
+                  <td>
+                    <span className="status-pill active">DELIVERED</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>#PO-105</td>
+                  <td>Guntur Poultry & Meats</td>
+                  <td>50 kg Fresh Chicken</td>
+                  <td>{formatCurrency(11000)}</td>
+                  <td>
+                    <span className="status-pill pending">ORDERED</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODULE 6: Table Reservations */}
+      {tab === "reservations" && (
+        <div className="enterprise-module-pane">
+          <div className="pane-header">
+            <h3>Table Bookings & Reservations</h3>
+            <button className="primary-admin-button" onClick={() => setModalType("reservation")}>
+              + New Reservation
+            </button>
+          </div>
+          <div className="admin-table-container">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Guest Name</th>
+                  <th>Contact</th>
+                  <th>Guests</th>
+                  <th>Date & Time</th>
+                  <th>Table</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reservations.map((res) => (
+                  <tr key={res.id}>
+                    <td>
+                      <strong>{res.guestName}</strong>
+                    </td>
+                    <td>{res.phone}</td>
+                    <td>👥 {res.guests} Guests</td>
+                    <td>{res.date} at {res.time}</td>
+                    <td>
+                      <strong>Table {res.tableNumber}</strong>
+                    </td>
+                    <td>
+                      <span className={`status-pill ${res.status.toLowerCase()}`}>{res.status}</span>
+                    </td>
+                    <td>
+                      <button
+                        className="secondary-btn-sm"
+                        onClick={() => {
+                          setReservations(
+                            reservations.map((r) =>
+                              r.id === res.id ? { ...r, status: r.status === "CONFIRMED" ? "SEATED" : "COMPLETED" } : r,
+                            ),
+                          );
+                        }}
+                      >
+                        {res.status === "CONFIRMED" ? "Seat Guest" : "Mark Complete"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODULE 7: Customer Loyalty */}
+      {tab === "loyalty" && (
+        <div className="enterprise-module-pane">
+          <h3>Customer Profiles & Rewards</h3>
+          <div className="loyalty-grid">
+            {[
+              ["Venkatesh Rao", "9876543210", "14 Visits", "₹8,450 Spent", "420 Loyalty Points"],
+              ["Sowmya K", "9876543211", "9 Visits", "₹5,200 Spent", "260 Loyalty Points"],
+              ["Kiran Kumar", "9876543212", "6 Visits", "₹3,800 Spent", "190 Loyalty Points"],
+            ].map(([name, phone, visits, spend, points]) => (
+              <div key={name} className="loyalty-card admin-card">
+                <h4>{name}</h4>
+                <p>Phone: {phone}</p>
+                <div>
+                  <strong>{visits}</strong> · <span>{spend}</span>
+                </div>
+                <div className="points-badge">🎁 {points}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* MODULE 8: Coupons & Promotions */}
+      {tab === "coupons" && (
+        <div className="enterprise-module-pane">
+          <h3>Active Promotional Coupons</h3>
+          <div className="coupons-grid">
+            {coupons.map((c) => (
+              <div key={c.id} className="coupon-card admin-card">
+                <div className="code-pill">{c.code}</div>
+                <h4>{c.discount}</h4>
+                <p>Min order bill: {formatCurrency(c.minSpend)}</p>
+                <small>Valid until: {c.validTill}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* MODULE 9: Feedback & Reviews */}
+      {tab === "feedback" && (
+        <div className="enterprise-module-pane">
+          <h3>Customer Feedback & Ratings</h3>
+          <div className="feedback-list">
+            {feedback.map((f) => (
+              <div key={f.id} className="feedback-card admin-card">
+                <div className="head">
+                  <strong>{f.guest}</strong>
+                  <span className="stars">{"⭐".repeat(f.rating)}</span>
+                </div>
+                <p>&ldquo;{f.comment}&rdquo;</p>
+                <div className="footer">
+                  <small>{f.date}</small>
+                  <span className={`status-pill ${f.status.toLowerCase()}`}>{f.status}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* MODULE 10: Multi-Branch Architecture */}
+      {tab === "branches" && (
+        <div className="enterprise-module-pane">
+          <h3>Multi-Branch Restaurant Setup</h3>
+          <div className="branch-card admin-card">
+            <h4>🏢 Main Branch — Athidhi Restaurant (Guntur)</h4>
+            <p>Address: Main Road, Near Old Bus Stand, Guntur, Andhra Pradesh 522001</p>
+            <p>Tables Configured: 12 Dining Tables</p>
+            <p>GST Rate: 5.0%</p>
+            <span className="status-pill active">Main Branch (Active)</span>
+          </div>
+        </div>
+      )}
+
+      {/* Add Staff Modal */}
+      {modalType === "staff" && (
+        <div className="admin-modal-backdrop" onClick={() => setModalType(null)}>
+          <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Add New Employee</h3>
+            <div className="modal-form">
+              <label>
+                Full Name
+                <input
+                  value={staffForm.name}
+                  onChange={(e) => setStaffForm({ ...staffForm, name: e.target.value })}
+                />
+              </label>
+              <label>
+                Role
+                <select
+                  value={staffForm.role}
+                  onChange={(e) => setStaffForm({ ...staffForm, role: e.target.value })}
+                >
+                  <option value="WAITER">Waiter</option>
+                  <option value="CHEF">Chef</option>
+                  <option value="CASHIER">Cashier</option>
+                  <option value="MANAGER">Manager</option>
+                </select>
+              </label>
+              <label>
+                Email
+                <input
+                  value={staffForm.email}
+                  onChange={(e) => setStaffForm({ ...staffForm, email: e.target.value })}
+                />
+              </label>
+              <label>
+                Phone
+                <input
+                  value={staffForm.phone}
+                  onChange={(e) => setStaffForm({ ...staffForm, phone: e.target.value })}
+                />
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary" onClick={() => setModalType(null)}>
+                Cancel
+              </button>
+              <button
+                className="primary"
+                onClick={() => {
+                  if (staffForm.name) {
+                    setStaffList([
+                      ...staffList,
+                      { id: `st-${Date.now()}`, ...staffForm, status: "Active" },
+                    ]);
+                    setModalType(null);
+                  }
+                }}
+              >
+                Save Employee
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Reservation Modal */}
+      {modalType === "reservation" && (
+        <div className="admin-modal-backdrop" onClick={() => setModalType(null)}>
+          <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>New Table Booking</h3>
+            <div className="modal-form">
+              <label>
+                Guest Name
+                <input
+                  value={resForm.guestName}
+                  onChange={(e) => setResForm({ ...resForm, guestName: e.target.value })}
+                />
+              </label>
+              <label>
+                Phone Number
+                <input
+                  value={resForm.phone}
+                  onChange={(e) => setResForm({ ...resForm, phone: e.target.value })}
+                />
+              </label>
+              <label>
+                Guest Count
+                <input
+                  type="number"
+                  value={resForm.guests}
+                  onChange={(e) => setResForm({ ...resForm, guests: Number(e.target.value) })}
+                />
+              </label>
+              <label>
+                Assigned Table
+                <select
+                  value={resForm.tableNumber}
+                  onChange={(e) => setResForm({ ...resForm, tableNumber: Number(e.target.value) })}
+                >
+                  {data.tables.map((t) => (
+                    <option key={t.id} value={t.number}>
+                      Table {t.number}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary" onClick={() => setModalType(null)}>
+                Cancel
+              </button>
+              <button
+                className="primary"
+                onClick={() => {
+                  if (resForm.guestName) {
+                    setReservations([
+                      ...reservations,
+                      { id: `res-${Date.now()}`, ...resForm, status: "CONFIRMED" },
+                    ]);
+                    setModalType(null);
+                  }
+                }}
+              >
+                Save Booking
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────── 9. Settings Workspace ─────────── */
 
 function SettingsWorkspace({
   restaurant,

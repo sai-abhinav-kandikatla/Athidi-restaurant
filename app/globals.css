@@ -2515,5 +2515,61 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .report-card h3 { font: 600 18px var(--font-playfair), Georgia, serif; color: var(--maroon); margin: 0; }
 .report-card p { color: var(--muted); font-size: 12px; margin: 0 0 10px; line-height: 1.5; flex: 1; }
 
+/* ═══════════════ Phase 8 — Enterprise Management System ═══════════════ */
+.enterprise-workspace-layout { min-width: 0; }
+.enterprise-header-strip { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }
+.enterprise-header-strip h2 { font: 600 clamp(24px, 2.5vw, 34px) var(--font-playfair), Georgia, serif; color: var(--maroon); margin: 0 0 4px; }
+.enterprise-header-strip p { color: var(--muted); font-size: 13px; margin: 0; }
+
+.alert-pill.warning { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 8px 16px; border-radius: 99px; font-size: 12px; font-weight: 800; }
+
+.enterprise-subtab-bar { display: flex; gap: 8px; margin-bottom: 20px; background: white; padding: 8px; border-radius: 12px; border: 1.5px solid var(--line); flex-wrap: wrap; }
+.enterprise-subtab-bar button { border: 0; background: transparent; padding: 10px 16px; font-size: 13px; font-weight: 700; color: var(--muted); border-radius: 8px; transition: all .2s; cursor: pointer; }
+.enterprise-subtab-bar button.active { background: var(--maroon); color: white; box-shadow: 0 4px 14px rgba(139,11,11,.2); }
+
+.enterprise-module-pane { min-width: 0; }
+.pane-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.pane-header h3 { font: 600 20px var(--font-playfair), Georgia, serif; color: var(--maroon); margin: 0; }
+
+/* Role & Status Badges */
+.role-badge { font-size: 10px; font-weight: 900; padding: 3px 8px; border-radius: 4px; text-transform: uppercase; }
+.role-badge.owner { background: var(--gold); color: var(--maroon-dark); }
+.role-badge.manager { background: #e67e22; color: white; }
+.role-badge.chef { background: var(--maroon); color: white; }
+.role-badge.waiter { background: #3498db; color: white; }
+.role-badge.cashier { background: var(--green); color: white; }
+
+.status-pill { font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; }
+.status-pill.active, .status-pill.confirmed { background: #edf7f0; color: var(--green); }
+.status-pill.inactive, .status-pill.cancelled { background: #fbeeee; color: var(--red); }
+.status-pill.pending, .status-pill.seated { background: #fff3cd; color: #856404; }
+
+.secondary-btn-sm { border: 1.5px solid var(--line); background: white; padding: 4px 10px; font-size: 11px; font-weight: 700; border-radius: 6px; cursor: pointer; }
+
+/* Grid Layouts for Shifts, Suppliers, Coupons, Loyalty */
+.shifts-grid, .suppliers-grid, .coupons-grid, .loyalty-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-top: 14px; }
+.shift-card, .supplier-card, .coupon-card, .loyalty-card, .branch-card { padding: 20px; }
+.shift-card h4, .supplier-card h4, .coupon-card h4, .loyalty-card h4, .branch-card h4 { font: 600 18px var(--font-playfair), Georgia, serif; color: var(--maroon); margin: 0 0 6px; }
+.shift-card .time { color: var(--muted); font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+.shift-card .count { font-size: 15px; font-weight: 800; color: var(--green); margin-bottom: 4px; }
+
+.stock-status-badge { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 4px; }
+.stock-status-badge.low { background: #fbeeee; color: var(--red); }
+.stock-status-badge.normal { background: #edf7f0; color: var(--green); }
+.admin-table tr.row-low-stock { background: #fff5f5; }
+
+.supplier-card .gstin { margin-top: 10px; font-size: 11px; font-weight: 800; color: var(--muted); }
+.points-badge { background: var(--gold); color: var(--maroon-dark); font-size: 11px; font-weight: 900; padding: 4px 10px; border-radius: 6px; display: inline-block; margin-top: 10px; }
+.code-pill { background: var(--maroon-dark); color: var(--gold); font-size: 12px; font-weight: 900; padding: 4px 10px; border-radius: 6px; display: inline-block; margin-bottom: 8px; }
+
+/* Feedback List */
+.feedback-list { display: grid; gap: 14px; margin-top: 14px; }
+.feedback-card { padding: 18px; }
+.feedback-card .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.feedback-card .head strong { font-size: 15px; color: var(--ink); }
+.feedback-card p { color: var(--muted); font-size: 13px; font-style: italic; margin: 0 0 10px; }
+.feedback-card .footer { display: flex; justify-content: space-between; align-items: center; }
+
+
 
 
