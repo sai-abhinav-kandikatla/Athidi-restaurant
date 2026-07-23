@@ -27,6 +27,7 @@ export type MenuCategory = {
   slug: string;
   sort_order: number;
   active: boolean;
+  description?: string | null;
 };
 
 export type MenuItem = {
@@ -41,6 +42,13 @@ export type MenuItem = {
   bestseller: boolean;
   image_url: string | null;
   sort_order: number;
+  discount_price?: number | null;
+  hidden?: boolean;
+  featured?: boolean;
+  chef_special?: boolean;
+  spice_level?: string | null;
+  prep_time?: number | null;
+  sku?: string | null;
   category?: Pick<MenuCategory, "id" | "name" | "slug"> | null;
 };
 

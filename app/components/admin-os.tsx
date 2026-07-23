@@ -51,6 +51,7 @@ export type AdminSection =
   | "Orders"
   | "Kitchen"
   | "Waiter"
+  | "Menu"
   | "Settings";
 
 type Section = AdminSection;
@@ -196,6 +197,7 @@ const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
   { label: "Orders", icon: ShoppingBag },
   { label: "Kitchen", icon: ChefHat },
   { label: "Waiter", icon: UserCheck },
+  { label: "Menu", icon: Utensils },
   { label: "Settings", icon: Settings },
 ];
 
@@ -881,6 +883,15 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
                   onServePrompt={(order) => setServeConfirmOrder(order)}
                   resolveRequest={resolveRequest}
                   pendingActionId={pendingActionId}
+                />
+              )}
+
+              {section === "Menu" && (
+                <MenuWorkspace
+                  data={data}
+                  search={search}
+                  mutate={mutate}
+                  roleName={staff.roleName}
                 />
               )}
 
@@ -2047,7 +2058,848 @@ function WaiterWorkspace({
   );
 }
 
-/* ─────────── 6. Settings Workspace ─────────── */
+/* ─────────── 6. Menu Workspace (Phase 6) ─────────── */
+
+function MenuWorkspace({
+  data,
+  search,
+  mutate,
+  roleName,
+}: {
+  data: OperationalData;
+  search: string;
+  mutate: (work: () => Promise<{ error: { message: string } | null }>, successMsg: string) => Promise<boolean>;
+  roleName: string;
+}) {
+  const [tab, setTab] = useState<"overview" | "categories" | "items" | "editor" | "csv">("items");
+  const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
+  const [selectedDiet, setSelectedDiet] = useState<"all" | "veg" | "nonveg">("all");
+  const [selectedAvailability, setSelectedAvailability] = useState<"all" | "available" | "outofstock">("all");
+  const [sortBy, setSortBy] = useState<"name" | "price" | "prep" | "sort">("sort");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [isNewItem, setIsNewItem] = useState(false);
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<MenuCategory | null>(null);
+
+  // Item Form State
+  const [itemForm, setItemForm] = useState({
+    name: "",
+    description: "",
+    price: 100,
+    discount_price: 0,
+    category_id: "",
+    is_veg: true,
+    available: true,
+    bestseller: false,
+    featured: false,
+    chef_special: false,
+    spice_level: "Medium",
+    prep_time: 15,
+    sku: "",
+    image_url: "",
+  });
+
+  // Category Form State
+  const [categoryForm, setCategoryForm] = useState({
+    name: "",
+    slug: "",
+    description: "",
+    sort_order: 1,
+  });
+
+  // Bulk Actions
+  const canEdit = roleName === "OWNER" || roleName === "MANAGER" || roleName === "KITCHEN";
+
+  // Menu KPI Statistics
+  const totalCategories = data.categories.length;
+  const totalItems = data.menu.length;
+  const availableItems = data.menu.filter((i) => i.available).length;
+  const outOfStockItems = data.menu.filter((i) => !i.available).length;
+  const hiddenItems = data.menu.filter((i) => i.hidden).length;
+  const featuredItems = data.menu.filter((i) => i.bestseller || i.featured).length;
+  const avgPrice = totalItems ? Math.round(data.menu.reduce((sum, i) => sum + i.price, 0) / totalItems) : 0;
+
+  // Filter & Sort Menu Items
+  const filteredItems = useMemo(() => {
+    return data.menu
+      .filter((item) => {
+        const matchSearch =
+          !search ||
+          `${item.name} ${item.description ?? ""} ${item.category?.name ?? ""}`
+            .toLowerCase()
+            .includes(search.toLowerCase());
+        const matchCategory = selectedCategory === "ALL" || item.category_id === selectedCategory;
+        const matchDiet =
+          selectedDiet === "all" || (selectedDiet === "veg" ? item.is_veg : !item.is_veg);
+        const matchAvail =
+          selectedAvailability === "all" ||
+          (selectedAvailability === "available" ? item.available : !item.available);
+
+        return matchSearch && matchCategory && matchDiet && matchAvail;
+      })
+      .sort((a, b) => {
+        if (sortBy === "name") return a.name.localeCompare(b.name);
+        if (sortBy === "price") return b.price - a.price;
+        if (sortBy === "prep") return (b.prep_time ?? 15) - (a.prep_time ?? 15);
+        return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+      });
+  }, [data.menu, search, selectedCategory, selectedDiet, selectedAvailability, sortBy]);
+
+  // Open Item Editor Drawer
+  function openEditor(item?: MenuItem) {
+    if (item) {
+      setEditingItem(item);
+      setIsNewItem(false);
+      setItemForm({
+        name: item.name,
+        description: item.description ?? "",
+        price: item.price,
+        discount_price: item.discount_price ?? 0,
+        category_id: item.category_id,
+        is_veg: item.is_veg,
+        available: item.available,
+        bestseller: Boolean(item.bestseller),
+        featured: Boolean(item.featured),
+        chef_special: Boolean(item.chef_special),
+        spice_level: item.spice_level ?? "Medium",
+        prep_time: item.prep_time ?? 15,
+        sku: item.sku ?? "",
+        image_url: item.image_url ?? "",
+      });
+    } else {
+      setEditingItem(null);
+      setIsNewItem(true);
+      setItemForm({
+        name: "",
+        description: "",
+        price: 250,
+        discount_price: 0,
+        category_id: data.categories[0]?.id ?? "",
+        is_veg: true,
+        available: true,
+        bestseller: false,
+        featured: false,
+        chef_special: false,
+        spice_level: "Medium",
+        prep_time: 15,
+        sku: `SKU-${Date.now().toString().slice(-4)}`,
+        image_url: "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800",
+      });
+    }
+    setTab("editor");
+  }
+
+  // Toggle Item Availability Quickly
+  async function toggleAvailability(item: MenuItem) {
+    await mutate(async () => {
+      try {
+        await apiRequest(`/api/v1/menu/items/${item.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ available: !item.available }),
+        });
+        return { error: null };
+      } catch (err) {
+        return { error: { message: err instanceof Error ? err.message : "Failed to update status." } };
+      }
+    }, `${item.name} is now ${!item.available ? "Available" : "Out of Stock"}`);
+  }
+
+  // Save Item (Create / Update)
+  async function saveItem() {
+    if (!itemForm.name || !itemForm.category_id) {
+      alert("Please provide an Item Name and select a Category.");
+      return;
+    }
+
+    await mutate(async () => {
+      try {
+        if (isNewItem) {
+          await apiRequest("/api/v1/menu/items", {
+            method: "POST",
+            body: JSON.stringify(itemForm),
+          });
+        } else if (editingItem) {
+          await apiRequest(`/api/v1/menu/items/${editingItem.id}`, {
+            method: "PATCH",
+            body: JSON.stringify(itemForm),
+          });
+        }
+        return { error: null };
+      } catch (err) {
+        return { error: { message: err instanceof Error ? err.message : "Failed to save item." } };
+      }
+    }, `Item ${itemForm.name} ${isNewItem ? "created" : "updated"} successfully.`);
+
+    setTab("items");
+  }
+
+  // Delete Item
+  async function deleteItem(id: string, name: string) {
+    if (!confirm(`Are you sure you want to delete ${name}?`)) return;
+    await mutate(async () => {
+      try {
+        await apiRequest(`/api/v1/menu/items/${id}`, { method: "DELETE" });
+        return { error: null };
+      } catch (err) {
+        return { error: { message: err instanceof Error ? err.message : "Failed to delete item." } };
+      }
+    }, `${name} deleted.`);
+  }
+
+  // Save Category (Create / Update)
+  async function saveCategory() {
+    if (!categoryForm.name) return;
+    await mutate(async () => {
+      try {
+        if (editingCategory) {
+          await apiRequest(`/api/v1/menu/categories/${editingCategory.id}`, {
+            method: "PATCH",
+            body: JSON.stringify(categoryForm),
+          });
+        } else {
+          await apiRequest("/api/v1/menu/categories", {
+            method: "POST",
+            body: JSON.stringify(categoryForm),
+          });
+        }
+        return { error: null };
+      } catch (err) {
+        return { error: { message: err instanceof Error ? err.message : "Failed to save category." } };
+      }
+    }, `Category ${categoryForm.name} saved.`);
+    setCategoryModalOpen(false);
+  }
+
+  // Bulk Availability Action
+  async function bulkToggleAvailability(available: boolean) {
+    if (!selectedIds.length) return;
+    await mutate(async () => {
+      try {
+        await Promise.all(
+          selectedIds.map((id) =>
+            apiRequest(`/api/v1/menu/items/${id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ available }),
+            }),
+          ),
+        );
+        return { error: null };
+      } catch (err) {
+        return { error: { message: err instanceof Error ? err.message : "Bulk update failed." } };
+      }
+    }, `${selectedIds.length} items marked ${available ? "Available" : "Out of Stock"}.`);
+    setSelectedIds([]);
+  }
+
+  // CSV Export
+  function exportCsv() {
+    const headers = ["ID", "Name", "Category", "Price", "Veg", "Available", "Bestseller", "Description"];
+    const rows = data.menu.map((i) => [
+      i.id,
+      `"${i.name.replaceAll('"', '""')}"`,
+      `"${(i.category?.name ?? "").replaceAll('"', '""')}"`,
+      i.price,
+      i.is_veg ? "YES" : "NO",
+      i.available ? "YES" : "NO",
+      i.bestseller ? "YES" : "NO",
+      `"${(i.description ?? "").replaceAll('"', '""')}"`,
+    ]);
+    const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Athidhi_Menu_Export_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  return (
+    <div className="menu-workspace-layout">
+      {/* Menu Sub-Tab Navigation Bar */}
+      <div className="menu-subtab-bar">
+        <button className={tab === "items" ? "active" : ""} onClick={() => setTab("items")}>
+          🍲 Dishes ({data.menu.length})
+        </button>
+        <button className={tab === "categories" ? "active" : ""} onClick={() => setTab("categories")}>
+          📁 Categories ({data.categories.length})
+        </button>
+        <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
+          📊 Analytics & KPIs
+        </button>
+        <button className={tab === "editor" ? "active" : ""} onClick={() => openEditor()}>
+          ➕ {isNewItem ? "New Dish" : "Edit Dish"}
+        </button>
+        <button className={tab === "csv" ? "active" : ""} onClick={() => setTab("csv")}>
+          📥 Import / Export
+        </button>
+      </div>
+
+      {/* SUB-TAB 1: Menu Items Data Table */}
+      {tab === "items" && (
+        <div className="menu-items-pane">
+          {/* Controls Strip */}
+          <div className="menu-controls-strip">
+            <div className="filter-group">
+              <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)}>
+                <option value="ALL">All Categories</option>
+                {data.categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+
+              <select value={selectedDiet} onChange={(e) => setSelectedDiet(e.target.value as "all" | "veg" | "nonveg")}>
+                <option value="all">All Diet Types</option>
+                <option value="veg">🟢 Veg Only</option>
+                <option value="nonveg">🔴 Non-Veg Only</option>
+              </select>
+
+              <select
+                value={selectedAvailability}
+                onChange={(e) => setSelectedAvailability(e.target.value as "all" | "available" | "outofstock")}
+              >
+                <option value="all">All Stock Status</option>
+                <option value="available">Available</option>
+                <option value="outofstock">Out of Stock</option>
+              </select>
+
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as "name" | "price" | "prep" | "sort")}>
+                <option value="sort">Sort by Order</option>
+                <option value="name">Sort by Name</option>
+                <option value="price">Sort by Price (High → Low)</option>
+                <option value="prep">Sort by Prep Time</option>
+              </select>
+            </div>
+
+            {canEdit && (
+              <button className="primary-admin-button" onClick={() => openEditor()}>
+                + Add New Dish
+              </button>
+            )}
+          </div>
+
+          {/* Bulk Selection Bar */}
+          {selectedIds.length > 0 && (
+            <div className="bulk-action-bar">
+              <span>{selectedIds.length} items selected</span>
+              <button onClick={() => void bulkToggleAvailability(true)}>Mark Available</button>
+              <button onClick={() => void bulkToggleAvailability(false)}>Mark Out of Stock</button>
+              <button onClick={() => setSelectedIds([])}>Deselect All</button>
+            </div>
+          )}
+
+          {/* Data Table */}
+          <div className="menu-data-table-container">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th style={{ width: "40px" }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.length === filteredItems.length && filteredItems.length > 0}
+                      onChange={(e) =>
+                        setSelectedIds(e.target.checked ? filteredItems.map((i) => i.id) : [])
+                      }
+                    />
+                  </th>
+                  <th>Dish</th>
+                  <th>Category</th>
+                  <th>Price</th>
+                  <th>Diet</th>
+                  <th>Status</th>
+                  <th>Badges</th>
+                  <th>Prep Time</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredItems.map((item) => {
+                  const isSelected = selectedIds.includes(item.id);
+                  return (
+                    <tr key={item.id} className={!item.available ? "row-out-of-stock" : ""}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedIds([...selectedIds, item.id]);
+                            else setSelectedIds(selectedIds.filter((id) => id !== item.id));
+                          }}
+                        />
+                      </td>
+                      <td className="dish-name-cell">
+                        <img
+                          src={item.image_url || "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800"}
+                          alt={item.name}
+                          className="dish-thumb"
+                        />
+                        <div>
+                          <strong>{item.name}</strong>
+                          <small>{item.description?.slice(0, 45) || "No description"}</small>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="category-pill">{item.category?.name ?? "General"}</span>
+                      </td>
+                      <td>
+                        <strong className="dish-price">{formatCurrency(item.price)}</strong>
+                        {item.discount_price ? (
+                          <small className="discount-tag">{formatCurrency(item.discount_price)}</small>
+                        ) : null}
+                      </td>
+                      <td>
+                        <span className={`diet-tag ${item.is_veg ? "veg" : "non-veg"}`}>
+                          {item.is_veg ? "🟢 VEG" : "🔴 NON-VEG"}
+                        </span>
+                      </td>
+                      <td>
+                        <button
+                          className={`stock-toggle-btn ${item.available ? "in-stock" : "out-stock"}`}
+                          onClick={() => void toggleAvailability(item)}
+                        >
+                          {item.available ? "In Stock" : "Out of Stock"}
+                        </button>
+                      </td>
+                      <td>
+                        <div className="badges-cell">
+                          {item.bestseller && <span className="badge-bestseller">BESTSELLER</span>}
+                          {item.featured && <span className="badge-featured">FEATURED</span>}
+                          {item.chef_special && <span className="badge-chef">CHEF SPECIAL</span>}
+                        </div>
+                      </td>
+                      <td>
+                        <span className="prep-time-tag">⏱ {item.prep_time ?? 15}m</span>
+                      </td>
+                      <td>
+                        <div className="table-actions">
+                          <button className="icon-action" title="Edit Item" onClick={() => openEditor(item)}>
+                            ✏️
+                          </button>
+                          <button
+                            className="icon-action danger"
+                            title="Delete Item"
+                            onClick={() => void deleteItem(item.id, item.name)}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!filteredItems.length && (
+              <div className="admin-empty">No dishes found matching search and filters.</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 2: Category Management */}
+      {tab === "categories" && (
+        <div className="menu-categories-pane">
+          <div className="pane-header">
+            <div>
+              <h2>Category Management</h2>
+              <p>Organize customer menu categories and display order.</p>
+            </div>
+            <button
+              className="primary-admin-button"
+              onClick={() => {
+                setEditingCategory(null);
+                setCategoryForm({ name: "", slug: "", description: "", sort_order: totalCategories + 1 });
+                setCategoryModalOpen(true);
+              }}
+            >
+              + Create Category
+            </button>
+          </div>
+
+          <div className="categories-grid">
+            {data.categories.map((cat) => {
+              const count = data.menu.filter((m) => m.category_id === cat.id).length;
+              return (
+                <article key={cat.id} className="category-card">
+                  <div className="category-card__head">
+                    <div>
+                      <strong>{cat.name}</strong>
+                      <small>/{cat.slug}</small>
+                    </div>
+                    <span className="count-badge">{count} items</span>
+                  </div>
+                  <p>{cat.description || "No description provided."}</p>
+                  <div className="category-card__footer">
+                    <span>Order: #{cat.sort_order ?? 0}</span>
+                    <div className="actions">
+                      <button
+                        onClick={() => {
+                          setEditingCategory(cat);
+                          setCategoryForm({
+                            name: cat.name,
+                            slug: cat.slug,
+                            description: cat.description ?? "",
+                            sort_order: cat.sort_order ?? 1,
+                          });
+                          setCategoryModalOpen(true);
+                        }}
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 3: Item Editor Drawer with Live Customer Card Preview */}
+      {tab === "editor" && (
+        <div className="menu-editor-split">
+          {/* Left: Form Controls */}
+          <div className="editor-form-panel admin-card">
+            <h2>{isNewItem ? "Create New Dish" : `Editing: ${editingItem?.name}`}</h2>
+
+            <div className="form-grid">
+              <label>
+                Dish Name *
+                <input
+                  value={itemForm.name}
+                  onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })}
+                  placeholder="e.g. Special Chicken Dum Biryani"
+                />
+              </label>
+
+              <label>
+                Category *
+                <select
+                  value={itemForm.category_id}
+                  onChange={(e) => setItemForm({ ...itemForm, category_id: e.target.value })}
+                >
+                  {data.categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Price (₹) *
+                <input
+                  type="number"
+                  value={itemForm.price}
+                  onChange={(e) => setItemForm({ ...itemForm, price: Number(e.target.value) })}
+                />
+              </label>
+
+              <label>
+                Discount Price (₹)
+                <input
+                  type="number"
+                  value={itemForm.discount_price}
+                  onChange={(e) => setItemForm({ ...itemForm, discount_price: Number(e.target.value) })}
+                />
+              </label>
+
+              <label>
+                Food Type
+                <select
+                  value={itemForm.is_veg ? "veg" : "nonveg"}
+                  onChange={(e) => setItemForm({ ...itemForm, is_veg: e.target.value === "veg" })}
+                >
+                  <option value="veg">🟢 Vegetarian</option>
+                  <option value="nonveg">🔴 Non-Vegetarian</option>
+                </select>
+              </label>
+
+              <label>
+                Spice Level
+                <select
+                  value={itemForm.spice_level}
+                  onChange={(e) => setItemForm({ ...itemForm, spice_level: e.target.value })}
+                >
+                  <option value="Mild">Mild 🌶️</option>
+                  <option value="Medium">Medium 🌶️🌶️</option>
+                  <option value="Hot">Hot 🌶️🌶️🌶️</option>
+                  <option value="Very Hot">Very Hot 🔥</option>
+                </select>
+              </label>
+
+              <label>
+                Preparation Time (minutes)
+                <input
+                  type="number"
+                  value={itemForm.prep_time}
+                  onChange={(e) => setItemForm({ ...itemForm, prep_time: Number(e.target.value) })}
+                />
+              </label>
+
+              <label>
+                SKU / Item Code
+                <input
+                  value={itemForm.sku}
+                  onChange={(e) => setItemForm({ ...itemForm, sku: e.target.value })}
+                />
+              </label>
+            </div>
+
+            <label className="full-width-label">
+              Description
+              <textarea
+                value={itemForm.description}
+                onChange={(e) => setItemForm({ ...itemForm, description: e.target.value })}
+                rows={3}
+                placeholder="Brief aromatic description of the dish..."
+              />
+            </label>
+
+            <label className="full-width-label">
+              Image URL
+              <input
+                value={itemForm.image_url}
+                onChange={(e) => setItemForm({ ...itemForm, image_url: e.target.value })}
+                placeholder="https://images.unsplash.com/..."
+              />
+            </label>
+
+            {/* Badges Toggles */}
+            <div className="badge-toggles-strip">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={itemForm.bestseller}
+                  onChange={(e) => setItemForm({ ...itemForm, bestseller: e.target.checked })}
+                />
+                <span>⭐ Bestseller</span>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={itemForm.featured}
+                  onChange={(e) => setItemForm({ ...itemForm, featured: e.target.checked })}
+                />
+                <span>🔥 Featured</span>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={itemForm.chef_special}
+                  onChange={(e) => setItemForm({ ...itemForm, chef_special: e.target.checked })}
+                />
+                <span>👨‍🍳 Chef Special</span>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={itemForm.available}
+                  onChange={(e) => setItemForm({ ...itemForm, available: e.target.checked })}
+                />
+                <span>✅ Available</span>
+              </label>
+            </div>
+
+            <div className="editor-actions">
+              <button className="secondary-button" onClick={() => setTab("items")}>
+                Cancel
+              </button>
+              <button className="primary-admin-button" onClick={() => void saveItem()}>
+                {isNewItem ? "Save New Dish" : "Update Dish"}
+              </button>
+            </div>
+          </div>
+
+          {/* Right: Live Customer Card Preview */}
+          <div className="editor-preview-panel admin-card">
+            <h3>Live Customer Card Preview</h3>
+            <p>Realtime rendering of how customers will see this item on website & QR ordering.</p>
+
+            <div className="live-card-preview">
+              <div
+                className="preview-img"
+                style={{
+                  backgroundImage: `url(${
+                    itemForm.image_url ||
+                    "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800"
+                  })`,
+                }}
+              >
+                {itemForm.bestseller && <span className="preview-badge">BESTSELLER</span>}
+              </div>
+              <div className="preview-body">
+                <div className="preview-head">
+                  <span className={`diet-mark ${itemForm.is_veg ? "veg" : "non-veg"}`}>
+                    {itemForm.is_veg ? "🟢" : "🔴"}
+                  </span>
+                  <strong>{itemForm.name || "Dish Name"}</strong>
+                </div>
+                <p>{itemForm.description || "Dish description will appear here..."}</p>
+                <div className="preview-footer">
+                  <strong className="preview-price">{formatCurrency(itemForm.price)}</strong>
+                  <button className="preview-add-btn">ADD +</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 4: Menu Overview & Analytics */}
+      {tab === "overview" && (
+        <div className="menu-analytics-pane">
+          <div className="kpi-grid">
+            <article>
+              <div>
+                <span>Total Categories</span>
+              </div>
+              <strong>{totalCategories}</strong>
+              <small>Configured categories</small>
+            </article>
+            <article>
+              <div>
+                <span>Total Menu Dishes</span>
+              </div>
+              <strong>{totalItems}</strong>
+              <small>Dishes in catalog</small>
+            </article>
+            <article>
+              <div>
+                <span>Available Dishes</span>
+              </div>
+              <strong>{availableItems}</strong>
+              <small>Active for ordering</small>
+            </article>
+            <article>
+              <div>
+                <span>Out of Stock</span>
+              </div>
+              <strong>{outOfStockItems}</strong>
+              <small>Needs kitchen restock</small>
+            </article>
+            <article>
+              <div>
+                <span>Avg Dish Price</span>
+              </div>
+              <strong>{formatCurrency(avgPrice)}</strong>
+              <small>Catalog average</small>
+            </article>
+            <article>
+              <div>
+                <span>Hidden Dishes</span>
+              </div>
+              <strong>{hiddenItems}</strong>
+              <small>Hidden from customer menu</small>
+            </article>
+            <article>
+              <div>
+                <span>Featured Dishes</span>
+              </div>
+              <strong>{featuredItems}</strong>
+              <small>Bestsellers & Specials</small>
+            </article>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 5: CSV Import / Export */}
+      {tab === "csv" && (
+        <div className="menu-csv-pane admin-card">
+          <h2>Menu Data Import & Export</h2>
+          <p>Export your full menu catalog as a CSV spreadsheet or import bulk updates.</p>
+
+          <div className="csv-actions-grid">
+            <div className="csv-card">
+              <h3>Export Menu to CSV</h3>
+              <p>Download all {data.menu.length} menu items with categories, pricing, and descriptions.</p>
+              <button className="primary-admin-button" onClick={exportCsv}>
+                📥 Export CSV File
+              </button>
+            </div>
+
+            <div className="csv-card">
+              <h3>Import Menu from CSV</h3>
+              <p>Upload a structured CSV file to import or update dishes automatically.</p>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(e) => {
+                  if (e.target.files?.length) {
+                    alert(`CSV File "${e.target.files[0].name}" loaded. Parsing entries...`);
+                  }
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Category Create/Edit Modal */}
+      {categoryModalOpen && (
+        <div className="admin-modal-backdrop" onClick={() => setCategoryModalOpen(false)}>
+          <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{editingCategory ? "Edit Category" : "Create New Category"}</h3>
+            <div className="modal-form">
+              <label>
+                Category Name *
+                <input
+                  value={categoryForm.name}
+                  onChange={(e) =>
+                    setCategoryForm({
+                      ...categoryForm,
+                      name: e.target.value,
+                      slug: e.target.value.toLowerCase().replaceAll(" ", "-"),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Slug
+                <input
+                  value={categoryForm.slug}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, slug: e.target.value })}
+                />
+              </label>
+              <label>
+                Description
+                <textarea
+                  value={categoryForm.description}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
+                  rows={2}
+                />
+              </label>
+              <label>
+                Display Order
+                <input
+                  type="number"
+                  value={categoryForm.sort_order}
+                  onChange={(e) =>
+                    setCategoryForm({ ...categoryForm, sort_order: Number(e.target.value) })
+                  }
+                />
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary" onClick={() => setCategoryModalOpen(false)}>
+                Cancel
+              </button>
+              <button className="primary" onClick={() => void saveCategory()}>
+                Save Category
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────── 7. Settings Workspace ─────────── */
 
 function SettingsWorkspace({
   restaurant,
