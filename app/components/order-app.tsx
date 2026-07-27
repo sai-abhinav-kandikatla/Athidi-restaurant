@@ -429,25 +429,6 @@ export function OrderApp({
                 <FoodMark veg={false} /> Non-veg
               </button>
             </div>
-            <select
-              className="price-sort-select"
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as "default" | "price-asc" | "price-desc")}
-              aria-label="Sort by price"
-              style={{
-                background: "var(--surface-card, #1a1a1a)",
-                color: "var(--text-main, #fff)",
-                border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: "8px",
-                padding: "6px 12px",
-                fontSize: "14px",
-                cursor: "pointer"
-              }}
-            >
-              <option value="default">Default Sort</option>
-              <option value="price-asc">Price Low → High</option>
-              <option value="price-desc">Price High → Low</option>
-            </select>
           </div>
 
           <div className="menu-result-heading">
