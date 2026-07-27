@@ -25,7 +25,7 @@ export async function PATCH(
   }
 
   const { id } = await params;
-  const body = (await request.json().catch(() => ({}))) as { status?: string };
+  const body = (await request.json().catch(() => ({}))) as { status?: string; payment_method?: string };
   const nextStatus = body.status;
 
   const validStatuses = [
@@ -47,7 +47,7 @@ export async function PATCH(
 
   const { data: currentOrder } = await supabase
     .from("orders")
-    .select("id, status")
+    .select("id, status, table_session_id, total")
     .eq("id", id)
     .eq("branch_id", staff.branch_id)
     .maybeSingle();
@@ -82,11 +82,40 @@ export async function PATCH(
     .update(updates)
     .eq("id", id)
     .eq("branch_id", staff.branch_id)
-    .select("*, table_session:table_sessions(table_id)")
+    .select("*, table_session:table_sessions(id, table_id)")
     .single();
 
   if (updateError || !updatedOrder) {
     return jsonError(updateError?.message ?? "Order update failed", 400);
+  }
+
+  // Handle Session Closure & Table Reset when order is marked PAID
+  if (nextStatus === "PAID" && updatedOrder.table_session) {
+    const tableSessionId = updatedOrder.table_session.id;
+    const tableId = updatedOrder.table_session.table_id;
+
+    // 1. Close table session
+    await supabase
+      .from("table_sessions")
+      .update({ closed_at: new Date().toISOString() })
+      .eq("id", tableSessionId);
+
+    // 2. Reset table to AVAILABLE
+    if (tableId) {
+      await supabase
+        .from("tables")
+        .update({ status: "AVAILABLE" })
+        .eq("id", tableId);
+    }
+
+    // 3. Record payment transaction
+    await supabase.from("payments").insert({
+      branch_id: staff.branch_id,
+      order_id: id,
+      payment_method: body.payment_method ?? "CASH",
+      amount: updatedOrder.total,
+      status: "COMPLETED",
+    });
   }
 
   // Record structured audit log
