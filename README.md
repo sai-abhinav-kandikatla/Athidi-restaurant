@@ -8,6 +8,12 @@ The customer application runs at `http://localhost:3000`. The protected staff
 application runs at `http://localhost:3001`. Both use the same Supabase Auth,
 PostgreSQL, and Realtime project.
 
+The production application is deployed at
+`https://athidirestaurant.vercel.app`. Canonical, OpenGraph, Twitter, sitemap,
+robots, manifest, structured-data, and table QR URLs derive from
+`NEXT_PUBLIC_SITE_URL`. Production table links use the format
+`https://athidirestaurant.vercel.app/table/<qr-token>`.
+
 ## What is implemented
 
 - Supabase Auth password sign-in for staff with database-backed roles
@@ -85,11 +91,13 @@ npm run lint
 npm run typecheck
 npm test
 npm run build:vercel
+npm run test:playwright
 ```
 
 `npm test` performs the Cloudflare/Vinext production build and verifies the
 server-rendered customer surface and health behavior. `build:vercel` verifies
-the native Next.js deployment output.
+the native Next.js deployment output. The Playwright suite verifies canonical,
+OpenGraph, Twitter, sitemap, robots, manifest, and table QR destination URLs.
 
 The database end-to-end test additionally needs the local service-role key for
 test setup and cleanup only. It is never used by either web application:

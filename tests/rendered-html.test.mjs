@@ -31,6 +31,8 @@ test("renders the Athidi customer application", async () => {
   const html = await response.text();
   assert.match(html, /Athidi Family Restaurant/i);
   assert.match(html, /Made with heart/i);
+  assert.match(html, /https:\/\/athidirestaurant\.vercel\.app/i);
+  assert.doesNotMatch(html, new RegExp(["athi", "dhi"].join(""), "i"));
   assert.doesNotMatch(html, /codex-preview|Building your site|mock data/i);
 });
 

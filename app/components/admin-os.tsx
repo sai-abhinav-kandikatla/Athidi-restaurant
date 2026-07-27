@@ -28,6 +28,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "../lib/api/client";
 import { formatCurrency, normalizeMenuItem } from "../lib/menu";
+import { tableOrderUrl } from "../lib/site-url";
 import type {
   DiningTable,
   MenuCategory,
@@ -1631,6 +1632,8 @@ function TableDetailsDrawer({
   requests: ServiceRequest[];
   onClose: () => void;
 }) {
+  const qrUrl = tableOrderUrl(table.qr_token);
+
   return (
     <div className="admin-drawer-backdrop" onClick={onClose}>
       <div className="admin-table-drawer" onClick={(e) => e.stopPropagation()}>
@@ -1645,6 +1648,13 @@ function TableDetailsDrawer({
         </header>
 
         <div className="drawer-body">
+          <section className="drawer-section">
+            <h3>Table QR Link</h3>
+            <a href={qrUrl} target="_blank" rel="noreferrer">
+              {qrUrl}
+            </a>
+          </section>
+
           {/* Service Timeline Progression */}
           <section className="drawer-section">
             <h3>Service Timeline</h3>
