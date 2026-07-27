@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { AdminOS } from "../components/admin-os";
-import type { StaffIdentity } from "../lib/restaurant-types";
+import {
+  defaultWorkspaceForRole,
+  normalizeStaffRole,
+} from "../lib/staff-access";
 import { getServerSupabase } from "../lib/supabase/server";
 
 export const metadata: Metadata = {
@@ -43,13 +45,15 @@ export default async function AdminPage() {
   const [branchResult, roleResult] = await Promise.all([
     supabase
       .from("branches")
-      .select("id,name")
+      .select("id")
       .eq("id", staffResult.data.branch_id)
+      .eq("restaurant_id", staffResult.data.restaurant_id)
       .single(),
     supabase
       .from("roles")
-      .select("id,name,permissions")
+      .select("id,name")
       .eq("id", staffResult.data.role_id)
+      .eq("restaurant_id", staffResult.data.restaurant_id)
       .single(),
   ]);
 
@@ -57,15 +61,9 @@ export default async function AdminPage() {
     redirect("/admin/login?error=profile");
   }
 
-  const staff: StaffIdentity = {
-    id: staffResult.data.id,
-    fullName: staffResult.data.full_name,
-    restaurantId: staffResult.data.restaurant_id,
-    branchId: branchResult.data.id,
-    branchName: branchResult.data.name,
-    roleName: roleResult.data.name,
-    permissions: (roleResult.data.permissions ?? {}) as Record<string, boolean>,
-  };
+  const role = normalizeStaffRole(roleResult.data.name);
+  const workspace = defaultWorkspaceForRole(role);
+  if (!workspace) redirect("/admin/login?error=access");
 
-  return <AdminOS staff={staff} />;
+  redirect(`/admin/${workspace}`);
 }

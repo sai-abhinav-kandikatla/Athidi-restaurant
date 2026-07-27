@@ -4,6 +4,16 @@ import { getPublicRestaurantData } from "../../lib/supabase/public-data";
 
 export const metadata: Metadata = {
   title: "Table ordering",
+  robots: {
+    index: false,
+    follow: false,
+    nocache: true,
+    googleBot: {
+      index: false,
+      follow: false,
+      noimageindex: true,
+    },
+  },
   description: "Order from your table at Athidi—no sign-up required.",
 };
 

@@ -66,7 +66,6 @@ export function OrderApp({
   const [items, setItems] = useState(initialItems);
   const [category, setCategory] = useState("All");
   const [diet, setDiet] = useState<"all" | "veg" | "nonveg">("all");
-  const [sortBy, setSortBy] = useState<"default" | "price-asc" | "price-desc">("default");
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
@@ -237,25 +236,19 @@ export function OrderApp({
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const filtered = useMemo(() => {
-    const list = items.filter((item) => {
-      const matchesCategory = category === "All" || itemCategory(item) === category;
-      const matchesDiet =
-        diet === "all" || (diet === "veg" ? item.is_veg : !item.is_veg);
-      const matchesQuery = `${item.name} ${item.description ?? ""} ${itemCategory(item)}`
-        .toLowerCase()
-        .includes(query.toLowerCase());
-      return matchesCategory && matchesDiet && matchesQuery;
-    });
-
-    if (sortBy === "price-asc") {
-      return [...list].sort((left, right) => Number(left.price) - Number(right.price));
-    }
-    if (sortBy === "price-desc") {
-      return [...list].sort((left, right) => Number(right.price) - Number(left.price));
-    }
-    return list;
-  }, [category, diet, items, query, sortBy]);
+  const filtered = useMemo(
+    () =>
+      items.filter((item) => {
+        const matchesCategory = category === "All" || itemCategory(item) === category;
+        const matchesDiet =
+          diet === "all" || (diet === "veg" ? item.is_veg : !item.is_veg);
+        const matchesQuery = `${item.name} ${item.description ?? ""} ${itemCategory(item)}`
+          .toLowerCase()
+          .includes(query.toLowerCase());
+        return matchesCategory && matchesDiet && matchesQuery;
+      }),
+    [category, diet, items, query],
+  );
 
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const subtotal = cart.reduce(

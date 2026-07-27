@@ -3,6 +3,13 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AdminOS, type AdminSection } from "../../components/admin-os";
 import type { StaffIdentity } from "../../lib/restaurant-types";
+import {
+  type AdminWorkspace,
+  canAccessWorkspace,
+  defaultWorkspaceForRole,
+  isAdminWorkspace,
+  normalizeStaffRole,
+} from "../../lib/staff-access";
 import { getServerSupabase } from "../../lib/supabase/server";
 
 export const metadata: Metadata = {
@@ -11,18 +18,18 @@ export const metadata: Metadata = {
 };
 export const dynamic = "force-dynamic";
 
-type StaffRole = "OWNER" | "MANAGER" | "CHEF" | "WAITER" | "CASHIER";
+const workspaces = {
+  dashboard: { section: "Dashboard" },
+  orders: { section: "Orders" },
+  "live-tables": { section: "Live Tables" },
+  kitchen: { section: "Kitchen" },
+  waiter: { section: "Waiter" },
+  settings: { section: "Settings" },
+} satisfies Partial<Record<AdminWorkspace, { section: AdminSection }>>;
 
-const workspaces: Record<string, { section: AdminSection; roles: readonly StaffRole[] }> = {
-  dashboard: { section: "Dashboard", roles: ["OWNER", "MANAGER"] },
-  orders: { section: "Orders", roles: ["OWNER", "MANAGER"] },
-  "live-tables": { section: "Live Tables", roles: ["OWNER", "MANAGER"] },
-  kitchen: { section: "Kitchen", roles: ["OWNER", "MANAGER", "CHEF"] },
-  waiter: { section: "Waiter", roles: ["OWNER", "MANAGER", "WAITER"] },
-  settings: { section: "Settings", roles: ["OWNER", "MANAGER"] },
-};
-
-async function requireAdminAccess(allowedRoles: readonly StaffRole[]): Promise<{ staff: StaffIdentity } | null> {
+async function requireAdminAccess(
+  workspace: AdminWorkspace,
+): Promise<{ staff: StaffIdentity } | null> {
   const supabase = await getServerSupabase();
   if (!supabase) return null;
 
@@ -41,15 +48,28 @@ async function requireAdminAccess(allowedRoles: readonly StaffRole[]): Promise<{
   if (!staffResult.data) redirect("/admin/login?error=access");
 
   const [branchResult, roleResult] = await Promise.all([
-    supabase.from("branches").select("id,name").eq("id", staffResult.data.branch_id).single(),
-    supabase.from("roles").select("id,name,permissions").eq("id", staffResult.data.role_id).single(),
+    supabase
+      .from("branches")
+      .select("id,name")
+      .eq("id", staffResult.data.branch_id)
+      .eq("restaurant_id", staffResult.data.restaurant_id)
+      .single(),
+    supabase
+      .from("roles")
+      .select("id,name,permissions")
+      .eq("id", staffResult.data.role_id)
+      .eq("restaurant_id", staffResult.data.restaurant_id)
+      .single(),
   ]);
 
   if (!branchResult.data || !roleResult.data) redirect("/admin/login?error=profile");
 
-  const roleName = roleResult.data.name.toUpperCase() as StaffRole;
-  if (!allowedRoles.map((r) => r.toUpperCase()).includes(roleName)) {
-    redirect("/admin?error=unauthorized");
+  const roleName = normalizeStaffRole(roleResult.data.name);
+  if (!roleName) redirect("/admin/login?error=access");
+  if (!canAccessWorkspace(roleName, workspace)) {
+    const fallback = defaultWorkspaceForRole(roleName);
+    if (!fallback) redirect("/admin/login?error=access");
+    redirect(`/admin/${fallback}?error=unauthorized`);
   }
 
   return {
@@ -59,7 +79,7 @@ async function requireAdminAccess(allowedRoles: readonly StaffRole[]): Promise<{
       restaurantId: staffResult.data.restaurant_id,
       branchId: branchResult.data.id,
       branchName: branchResult.data.name,
-      roleName: roleResult.data.name,
+      roleName,
       permissions: (roleResult.data.permissions ?? {}) as Record<string, boolean>,
     },
   };
@@ -71,8 +91,9 @@ export default async function AdminWorkspacePage({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace } = await params;
+  if (!isAdminWorkspace(workspace)) notFound();
   if (workspace === "billing") {
-    const access = await requireAdminAccess(["OWNER", "CASHIER"]);
+    const access = await requireAdminAccess(workspace);
     if (!access) return <BackendRequired />;
     return (
       <main className="auth-page">
@@ -87,7 +108,7 @@ export default async function AdminWorkspacePage({
   }
   const definition = workspaces[workspace];
   if (!definition) notFound();
-  const access = await requireAdminAccess(definition.roles);
+  const access = await requireAdminAccess(workspace);
   if (!access) return <BackendRequired />;
   return <AdminOS staff={access.staff} initialSection={definition.section} />;
 }

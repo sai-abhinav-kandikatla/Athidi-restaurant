@@ -20,14 +20,17 @@ enabled = true
 
 [auth]
 enabled = true
-site_url = "http://localhost:3000"
+site_url = "https://athidirestaurant.vercel.app"
 additional_redirect_urls = [
+  "https://athidirestaurant.vercel.app/auth/callback",
+  "http://localhost:3000",
   "http://localhost:3000/auth/callback",
+  "http://localhost:3001",
   "http://localhost:3001/auth/callback"
 ]
 jwt_expiry = 3600
 enable_signup = true
-enable_anonymous_sign_ins = false
+enable_anonymous_sign_ins = true
 
 [auth.email]
 enable_signup = true
