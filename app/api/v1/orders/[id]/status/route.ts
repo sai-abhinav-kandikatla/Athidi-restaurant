@@ -1,5 +1,16 @@
 import { getAuthenticatedStaff, jsonError, jsonSuccess, verifyCsrf } from "../../../../../lib/auth-helpers";
 
+const VALID_TRANSITIONS: Record<string, string[]> = {
+  PLACED: ["ACCEPTED", "PREPARING", "CANCELLED"],
+  ACCEPTED: ["PREPARING", "CANCELLED"],
+  PREPARING: ["READY", "CANCELLED"],
+  READY: ["SERVED", "BILLED"],
+  SERVED: ["BILLED", "PAID"],
+  BILLED: ["PAID"],
+  PAID: [],
+  CANCELLED: [],
+};
+
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -29,10 +40,32 @@ export async function PATCH(
   ];
 
   if (!nextStatus || !validStatuses.includes(nextStatus)) {
-    return jsonError("Invalid order status", 400);
+    return jsonError("Invalid order status", 400, "invalid_status");
   }
 
   const { supabase, staff } = ctx;
+
+  const { data: currentOrder } = await supabase
+    .from("orders")
+    .select("id, status")
+    .eq("id", id)
+    .eq("branch_id", staff.branch_id)
+    .maybeSingle();
+
+  if (!currentOrder) {
+    return jsonError("Order not found", 404, "order_not_found");
+  }
+
+  const currentStatus = currentOrder.status;
+  const allowedNext = VALID_TRANSITIONS[currentStatus] ?? [];
+
+  if (!allowedNext.includes(nextStatus) && currentStatus !== nextStatus) {
+    return jsonError(
+      `Invalid order status transition from ${currentStatus} to ${nextStatus}`,
+      400,
+      "invalid_state_transition"
+    );
+  }
 
   const updates: Record<string, unknown> = {
     status: nextStatus,
@@ -53,16 +86,21 @@ export async function PATCH(
     .single();
 
   if (updateError || !updatedOrder) {
-    return jsonError(updateError?.message ?? "Order not found", 400);
+    return jsonError(updateError?.message ?? "Order update failed", 400);
   }
 
-  // Record audit log
+  // Record structured audit log
   await supabase.from("audit_logs").insert({
     branch_id: staff.branch_id,
     staff_id: staff.id,
     action: `ORDER_${nextStatus}`,
-    data: { order_id: id, status: nextStatus },
+    data: {
+      order_id: id,
+      previous_state: currentStatus,
+      new_state: nextStatus,
+      updated_by: staff.id,
+    },
   });
 
-  return jsonSuccess(updatedOrder);
+  return jsonSuccess(updatedOrder, 200, "Order status updated successfully");
 }

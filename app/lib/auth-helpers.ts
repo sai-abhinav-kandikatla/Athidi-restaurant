@@ -56,11 +56,28 @@ export async function verifyCsrf(request: Request): Promise<boolean> {
 
 export function jsonError(message: string, status: number, code?: string) {
   return NextResponse.json(
-    { error: { message, code: code ?? "request_failed" } },
+    {
+      success: false,
+      error: {
+        code: code ?? "request_failed",
+        message,
+      },
+      timestamp: new Date().toISOString(),
+      requestId: crypto.randomUUID(),
+    },
     { status }
   );
 }
 
-export function jsonSuccess<T>(data: T, status = 200) {
-  return NextResponse.json({ data }, { status });
+export function jsonSuccess<T>(data: T, status = 200, message = "Success") {
+  return NextResponse.json(
+    {
+      success: true,
+      data,
+      message,
+      timestamp: new Date().toISOString(),
+      requestId: crypto.randomUUID(),
+    },
+    { status }
+  );
 }
