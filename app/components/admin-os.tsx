@@ -1323,7 +1323,7 @@ function WaiterWorkspace({
       <div className="view-intro">
         <div>
           <p className="eyebrow eyebrow--maroon"><span /> Waiter Workspace</p>
-          <h2>Food ready queue & guest assistance</h2>
+          <h2>Food ready queue & guest assistance ({staffName})</h2>
         </div>
       </div>
 
@@ -1740,7 +1740,7 @@ function formatTime(iso: string) {
   }
 }
 
-function _auditType(action: string): ActivityLogItem["type"] {
+export function _auditType(action: string): ActivityLogItem["type"] {
   if (action.includes("ORDER") || action === "FOOD_SERVED" || action.includes("PAYMENT")) return "order";
   if (action.includes("REQUEST")) return "request";
   if (action.includes("SESSION")) return "session";
@@ -1748,7 +1748,7 @@ function _auditType(action: string): ActivityLogItem["type"] {
   return "system";
 }
 
-function _auditIcon(action: string) {
+export function _auditIcon(action: string) {
   if (action === "ORDER_READY") return "🟢";
   if (action === "FOOD_SERVED") return "✓";
   if (action.includes("REQUEST")) return "🔔";
@@ -1758,7 +1758,7 @@ function _auditIcon(action: string) {
   return "•";
 }
 
-function auditMessage(action: string, metadata: Record<string, unknown>) {
+export function auditMessage(action: string, metadata: Record<string, unknown>) {
   const label = action.toLowerCase().replaceAll("_", " ");
   const status = typeof metadata.status === "string" ? ` · ${metadata.status.toLowerCase()}` : "";
   return `${label.charAt(0).toUpperCase()}${label.slice(1)}${status}`;
