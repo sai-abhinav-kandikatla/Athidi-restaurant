@@ -1,4 +1,4 @@
-project_id = "athidhi-restaurant-os"
+project_id = "athidi-restaurant-os"
 
 [api]
 enabled = true

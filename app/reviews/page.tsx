@@ -6,7 +6,7 @@ export default function ReviewsPage() {
     <PublicPage
       eyebrow="Our promise"
       title="Hospitality you can feel."
-      intro="We do not publish invented ratings or guest quotes. Athidhi’s promise is simple: fresh food, thoughtful service and a table where families feel at home."
+      intro="We do not publish invented ratings or guest quotes. Athidi’s promise is simple: fresh food, thoughtful service and a table where families feel at home."
     >
       <div className="public-prose">
         <h2>Share your experience directly</h2>
@@ -16,7 +16,7 @@ export default function ReviewsPage() {
           real person.
         </p>
         <Link href="/contact" className="button button--maroon">
-          Contact Athidhi
+          Contact Athidi
         </Link>
       </div>
     </PublicPage>

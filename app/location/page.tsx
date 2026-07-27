@@ -13,7 +13,7 @@ export default async function LocationPage() {
     <PublicPage
       eyebrow="Come, be our guest"
       title="Your table is waiting."
-      intro="Visit Athidhi for relaxed lunches, family dinners and everything in between."
+      intro="Visit Athidi for relaxed lunches, family dinners and everything in between."
     >
       <div className="location-panel">
         <div>
@@ -23,7 +23,7 @@ export default async function LocationPage() {
         </div>
         <div>
           <span>ADDRESS</span>
-          <h2>{data.restaurant?.name ?? "Athidhi Family Restaurant"}</h2>
+          <h2>{data.restaurant?.name ?? "Athidi Family Restaurant"}</h2>
           <p>{data.branch?.address ?? "Contact the restaurant for directions."}</p>
         </div>
       </div>

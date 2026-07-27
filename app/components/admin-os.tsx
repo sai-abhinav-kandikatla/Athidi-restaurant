@@ -425,7 +425,7 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
           <Store size={17} />
           <span>
             <small>ACTIVE RESTAURANT</small>
-            <strong>Athidhi Restaurant</strong>
+            <strong>Athidi Restaurant</strong>
           </span>
         </div>
 
@@ -465,7 +465,7 @@ export function AdminOS({ staff, initialSection = "Dashboard" }: { staff: StaffI
         {/* Topbar */}
         <header className="admin-header">
           <div>
-            <span className="admin-breadcrumb">ATHIDHI ROS / {section.toUpperCase()}</span>
+            <span className="admin-breadcrumb">ATHIDI ROS / {section.toUpperCase()}</span>
             <h1>{section === "Dashboard" ? `Control Center — Welcome, ${staff.fullName.split(" ")[0]}.` : section}</h1>
           </div>
 
@@ -1730,7 +1730,7 @@ function formatTime(iso: string) {
   }
 }
 
-function auditType(action: string): ActivityLogItem["type"] {
+function _auditType(action: string): ActivityLogItem["type"] {
   if (action.includes("ORDER") || action === "FOOD_SERVED" || action.includes("PAYMENT")) return "order";
   if (action.includes("REQUEST")) return "request";
   if (action.includes("SESSION")) return "session";
@@ -1738,7 +1738,7 @@ function auditType(action: string): ActivityLogItem["type"] {
   return "system";
 }
 
-function auditIcon(action: string) {
+function _auditIcon(action: string) {
   if (action === "ORDER_READY") return "🟢";
   if (action === "FOOD_SERVED") return "✓";
   if (action.includes("REQUEST")) return "🔔";

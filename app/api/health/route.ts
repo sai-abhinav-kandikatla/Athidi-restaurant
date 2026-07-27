@@ -16,7 +16,7 @@ export async function GET() {
   const result = await supabase
     .from("restaurants")
     .select("id")
-    .eq("slug", "athidhi-family-restaurant")
+    .eq("slug", "athidi-family-restaurant")
     .maybeSingle();
 
   if (result.error || !result.data) {

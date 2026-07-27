@@ -66,6 +66,7 @@ export function OrderApp({
   const [items, setItems] = useState(initialItems);
   const [category, setCategory] = useState("All");
   const [diet, setDiet] = useState<"all" | "veg" | "nonveg">("all");
+  const [sortBy, setSortBy] = useState<"default" | "price-asc" | "price-desc">("default");
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
@@ -236,19 +237,25 @@ export function OrderApp({
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const filtered = useMemo(
-    () =>
-      items.filter((item) => {
-        const matchesCategory = category === "All" || itemCategory(item) === category;
-        const matchesDiet =
-          diet === "all" || (diet === "veg" ? item.is_veg : !item.is_veg);
-        const matchesQuery = `${item.name} ${item.description ?? ""} ${itemCategory(item)}`
-          .toLowerCase()
-          .includes(query.toLowerCase());
-        return matchesCategory && matchesDiet && matchesQuery;
-      }),
-    [category, diet, items, query],
-  );
+  const filtered = useMemo(() => {
+    const list = items.filter((item) => {
+      const matchesCategory = category === "All" || itemCategory(item) === category;
+      const matchesDiet =
+        diet === "all" || (diet === "veg" ? item.is_veg : !item.is_veg);
+      const matchesQuery = `${item.name} ${item.description ?? ""} ${itemCategory(item)}`
+        .toLowerCase()
+        .includes(query.toLowerCase());
+      return matchesCategory && matchesDiet && matchesQuery;
+    });
+
+    if (sortBy === "price-asc") {
+      return [...list].sort((left, right) => Number(left.price) - Number(right.price));
+    }
+    if (sortBy === "price-desc") {
+      return [...list].sort((left, right) => Number(right.price) - Number(left.price));
+    }
+    return list;
+  }, [category, diet, items, query, sortBy]);
 
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const subtotal = cart.reduce(
@@ -338,7 +345,7 @@ export function OrderApp({
           <div className="table-context">
             <span className={table ? "pulse-dot" : "status-dot"} />
             <div>
-              <small>{table ? "Dining in" : "Athidhi menu"}</small>
+              <small>{table ? "Dining in" : "Athidi menu"}</small>
               <strong>{table ? `Table ${table.table_number}` : "Explore the menu"}</strong>
             </div>
           </div>
@@ -422,6 +429,25 @@ export function OrderApp({
                 <FoodMark veg={false} /> Non-veg
               </button>
             </div>
+            <select
+              className="price-sort-select"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as "default" | "price-asc" | "price-desc")}
+              aria-label="Sort by price"
+              style={{
+                background: "var(--surface-card, #1a1a1a)",
+                color: "var(--text-main, #fff)",
+                border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: "8px",
+                padding: "6px 12px",
+                fontSize: "14px",
+                cursor: "pointer"
+              }}
+            >
+              <option value="default">Default Sort</option>
+              <option value="price-asc">Price Low → High</option>
+              <option value="price-desc">Price High → Low</option>
+            </select>
           </div>
 
           <div className="menu-result-heading">
@@ -734,15 +760,37 @@ function CartContent({
             ))}
           </div>
           <div className="order-options">
-            <label>
-              <span>Spice level</span>
-              <select value={spice} onChange={(event) => setSpice(event.target.value)}>
-                <option>Mild</option>
-                <option>Medium</option>
-                <option>Spicy</option>
-                <option>Extra spicy</option>
-              </select>
-            </label>
+            {cart.some((line) => {
+              const catName = itemCategory(line).toLowerCase();
+              const itemName = line.name.toLowerCase();
+              const isNonSpicyCategory =
+                catName.includes("naan") ||
+                catName.includes("roti") ||
+                catName.includes("bread") ||
+                catName.includes("drink") ||
+                catName.includes("water") ||
+                catName.includes("other");
+              const isNonSpicyItem =
+                itemName.includes("water") ||
+                itemName.includes("cool drink") ||
+                itemName.includes("drink") ||
+                itemName.includes("boiled egg") ||
+                itemName.includes("curd rice") ||
+                itemName.includes("biryani rice") ||
+                itemName.includes("naan") ||
+                itemName.includes("roti");
+              return !isNonSpicyCategory && !isNonSpicyItem;
+            }) && (
+              <label>
+                <span>Spice level</span>
+                <select value={spice} onChange={(event) => setSpice(event.target.value)}>
+                  <option>Mild</option>
+                  <option>Medium</option>
+                  <option>Spicy</option>
+                  <option>Extra spicy</option>
+                </select>
+              </label>
+            )}
             <label>
               <span>Kitchen note</span>
               <textarea

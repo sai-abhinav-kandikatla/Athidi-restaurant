@@ -47,8 +47,8 @@ type ServiceCooldown = {
   [key: string]: number; // timestamp when cooldown expires
 };
 
-const CART_STORAGE_KEY = "athidhi_cart";
-const SESSION_STORAGE_KEY = "athidhi_session";
+const CART_STORAGE_KEY = "athidi_cart";
+const SESSION_STORAGE_KEY = "athidi_session";
 const COOLDOWN_MS = 60_000; // 60 seconds
 
 /* ─────────── Component ─────────── */
@@ -484,7 +484,7 @@ export function TableOrderApp({
               Session started at {formatSessionTime(table.session_opened_at)}
             </div>
           )}
-          <h2>Welcome to Athidhi Family Restaurant!</h2>
+          <h2>Welcome to Athidi Family Restaurant!</h2>
         </div>
       </section>
 
@@ -805,15 +805,37 @@ export function TableOrderApp({
 
                   <div className="tbl-cart-footer">
                     <div className="tbl-cart-options">
-                      <label>
-                        Spice Level
-                        <select value={spice} onChange={(e) => setSpice(e.target.value)}>
-                          <option>Mild</option>
-                          <option>Medium</option>
-                          <option>Spicy</option>
-                          <option>Extra spicy</option>
-                        </select>
-                      </label>
+                      {cart.some((line) => {
+                        const catName = itemCategory(line).toLowerCase();
+                        const itemName = line.name.toLowerCase();
+                        const isNonSpicyCategory =
+                          catName.includes("naan") ||
+                          catName.includes("roti") ||
+                          catName.includes("bread") ||
+                          catName.includes("drink") ||
+                          catName.includes("water") ||
+                          catName.includes("other");
+                        const isNonSpicyItem =
+                          itemName.includes("water") ||
+                          itemName.includes("cool drink") ||
+                          itemName.includes("drink") ||
+                          itemName.includes("boiled egg") ||
+                          itemName.includes("curd rice") ||
+                          itemName.includes("biryani rice") ||
+                          itemName.includes("naan") ||
+                          itemName.includes("roti");
+                        return !isNonSpicyCategory && !isNonSpicyItem;
+                      }) && (
+                        <label>
+                          Spice Level
+                          <select value={spice} onChange={(e) => setSpice(e.target.value)}>
+                            <option>Mild</option>
+                            <option>Medium</option>
+                            <option>Spicy</option>
+                            <option>Extra spicy</option>
+                          </select>
+                        </label>
+                      )}
                       <label>
                         Special Instructions
                         <textarea

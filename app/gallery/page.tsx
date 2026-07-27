@@ -11,7 +11,7 @@ export default async function GalleryPage() {
     <PublicPage
       eyebrow="From our kitchen"
       title="A feast for every sense."
-      intro="A closer look at the dishes currently served at Athidhi."
+      intro="A closer look at the dishes currently served at Athidi."
     >
       <div className="public-gallery">
         {photos.map((item) => (

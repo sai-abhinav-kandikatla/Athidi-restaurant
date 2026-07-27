@@ -1,4 +1,4 @@
--- Run this once on an existing hosted Athidhi database created before the
+-- Run this once on an existing hosted Athidi database created before the
 -- versioned API was added. New installations already receive this function
 -- from schema.sql.
 
@@ -110,7 +110,7 @@ begin
   join public.branches target_branch on target_branch.id = target_table.branch_id
   join public.restaurants target_restaurant on target_restaurant.id = target_branch.restaurant_id
   where target_table.number = p_table_number
-    and target_restaurant.slug = 'athidhi-family-restaurant'
+    and target_restaurant.slug = 'athidi-family-restaurant'
     and (p_branch_id is null or target_table.branch_id = p_branch_id)
   order by target_branch.created_at
   limit 1;

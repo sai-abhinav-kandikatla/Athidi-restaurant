@@ -16,7 +16,7 @@ export default function AdminLoginPage() {
     const reason = new URLSearchParams(window.location.search).get("error");
     queueMicrotask(() => {
       if (reason === "access") {
-        setError("This account does not have an active Athidhi staff profile.");
+        setError("This account does not have an active Athidi staff profile.");
       } else if (reason === "profile") {
         setError("The staff profile is incomplete. Ask an owner to update it.");
       } else if (reason === "callback") {

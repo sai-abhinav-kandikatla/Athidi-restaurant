@@ -69,7 +69,7 @@ try {
   assert.ifError(serviceRequest.error);
   requestId = serviceRequest.data.id;
 
-  const staffEmail = `e2e-${randomBytes(8).toString("hex")}@athidhi.local`;
+  const staffEmail = `e2e-${randomBytes(8).toString("hex")}@athidi.local`;
   const staffPassword = `${randomBytes(16).toString("base64url")}!Aa1`;
   const createdStaff = await service.auth.admin.createUser({
     email: staffEmail,

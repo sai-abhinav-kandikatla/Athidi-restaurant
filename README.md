@@ -1,6 +1,6 @@
-# Athidhi Restaurant Operating System
+# Athidi Restaurant Operating System
 
-Athidhi ROS is a production application for the public restaurant website, QR
+Athidi ROS is a production application for the public restaurant website, QR
 table ordering, kitchen operations, waiter requests, billing, table management,
 menu management, analytics, and restaurant settings.
 

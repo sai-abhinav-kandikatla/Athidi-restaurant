@@ -6,7 +6,7 @@ import { getServerSupabase } from "../lib/supabase/server";
 
 export const metadata: Metadata = {
   title: "Restaurant operations",
-  description: "Athidhi restaurant operations dashboard.",
+  description: "Athidi restaurant operations dashboard.",
 };
 export const dynamic = "force-dynamic";
 
@@ -16,7 +16,7 @@ export default async function AdminPage() {
     return (
       <main className="auth-page">
         <section className="auth-card">
-          <span className="auth-kicker">ATHIDHI RESTAURANT OS</span>
+          <span className="auth-kicker">ATHIDI RESTAURANT OS</span>
           <h1>Backend configuration required</h1>
           <p>
             Add the Supabase project URL and anonymous key to the application

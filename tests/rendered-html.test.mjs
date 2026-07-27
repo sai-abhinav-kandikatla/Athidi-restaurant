@@ -18,7 +18,7 @@ const context = {
   passThroughOnException() {},
 };
 
-test("renders the Athidhi customer application", async () => {
+test("renders the Athidi customer application", async () => {
   const application = await worker();
   const response = await application.fetch(
     new Request("http://localhost/", { headers: { accept: "text/html" } }),
@@ -29,7 +29,7 @@ test("renders the Athidhi customer application", async () => {
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
-  assert.match(html, /Athidhi Family Restaurant/i);
+  assert.match(html, /Athidi Family Restaurant/i);
   assert.match(html, /Made with heart/i);
   assert.doesNotMatch(html, /codex-preview|Building your site|mock data/i);
 });

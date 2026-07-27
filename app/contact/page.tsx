@@ -9,7 +9,7 @@ export default async function ContactPage() {
     <PublicPage
       eyebrow="Talk to us"
       title="We’d love to hear from you."
-      intro="For reservations, celebrations or anything else, reach the Athidhi team here."
+      intro="For reservations, celebrations or anything else, reach the Athidi team here."
     >
       <div className="contact-cards">
         {data.restaurant?.phone && (
@@ -26,13 +26,13 @@ export default async function ContactPage() {
             <span>WHATSAPP</span>
             <h2>Quick messages</h2>
             <a href={`https://wa.me/${data.restaurant.whatsapp.replace(/\D/g, "")}`}>
-              Message Athidhi
+              Message Athidi
             </a>
           </article>
         )}
         <article>
           <span>VISIT</span>
-          <h2>{data.branch?.name ?? "Athidhi Family Restaurant"}</h2>
+          <h2>{data.branch?.name ?? "Athidi Family Restaurant"}</h2>
           <p>{data.branch?.address ?? "Contact us for directions."}</p>
         </article>
       </div>

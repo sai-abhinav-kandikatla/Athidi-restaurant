@@ -2,6 +2,14 @@
 
 let csrfToken: string | null = null;
 
+type ApiPayload = {
+  data?: Record<string, unknown> & { token?: string };
+  error?: {
+    code?: string;
+    message?: string;
+  };
+} | null;
+
 export class ApiClientError extends Error {
   constructor(
     message: string,
@@ -59,15 +67,15 @@ async function getCsrfToken() {
   return csrfToken;
 }
 
-async function safeJson(response: Response): Promise<any> {
+async function safeJson(response: Response): Promise<ApiPayload> {
   try {
-    return await response.json();
+    return (await response.json()) as ApiPayload;
   } catch {
     return null;
   }
 }
 
-function apiClientError(status: number, payload: any) {
+function apiClientError(status: number, payload: ApiPayload) {
   return new ApiClientError(
     payload?.error?.message ?? "The request could not be completed.",
     status,

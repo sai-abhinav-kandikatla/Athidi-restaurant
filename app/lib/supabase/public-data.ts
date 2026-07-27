@@ -38,7 +38,7 @@ export async function getPublicRestaurantData(): Promise<PublicRestaurantData> {
     supabase
       .from("restaurants")
       .select("id,name,slug,phone,whatsapp,branches(id,name,address,opens_at,closes_at)")
-      .eq("slug", "athidhi-family-restaurant")
+      .eq("slug", "athidi-family-restaurant")
       .maybeSingle(),
     supabase
       .from("menu_categories")

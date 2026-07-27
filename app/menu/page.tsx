@@ -4,7 +4,7 @@ import { getPublicRestaurantData } from "../lib/supabase/public-data";
 
 export const metadata: Metadata = {
   title: "Menu",
-  description: "Explore the live Athidhi menu and current availability.",
+  description: "Explore the live Athidi menu and current availability.",
 };
 export const dynamic = "force-dynamic";
 

@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════════
--- ATHIDHI RESTAURANT & ROS — COMPLETE DATABASE MIGRATION & SEED
+-- ATHIDI RESTAURANT & ROS — COMPLETE DATABASE MIGRATION & SEED
 -- ════════════════════════════════════════════════════════════════
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -273,12 +273,12 @@ DECLARE
     v_cat_drinks UUID;
 BEGIN
     INSERT INTO public.restaurants (name, slug, phone, whatsapp)
-    VALUES ('Athidhi Family Restaurant', 'athidhi-family-restaurant', '+919876543210', '+919876543210')
+    VALUES ('Athidi Family Restaurant', 'athidi-family-restaurant', '+919876543210', '+919876543210')
     ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
     RETURNING id INTO v_rest_id;
 
     INSERT INTO public.branches (restaurant_id, name, code, address, opens_at, closes_at, gstin, tax_rate)
-    VALUES (v_rest_id, 'Athidhi Restaurant - Guntur', 'ATH-GNT-01', 'Ring Road, Near NTR Circle, Guntur, AP', '11:00 AM', '11:00 PM', '37AAAAA0000A1Z5', 5.00)
+    VALUES (v_rest_id, 'Athidi Main Branch', 'ATH-GNT-01', 'Ring Road, Near NTR Circle, Guntur, AP', '11:00 AM', '11:00 PM', '37AAAAA0000A1Z5', 5.00)
     RETURNING id INTO v_branch_id;
 
     INSERT INTO public.table_sections (branch_id, name, sort_order)

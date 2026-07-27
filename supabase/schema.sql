@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════════
--- ATHIDHI RESTAURANT & ROS — COMPLETE DATABASE SCHEMA & SEED DATA
+-- ATHIDI RESTAURANT & ROS — COMPLETE DATABASE SCHEMA & SEED DATA
 -- ════════════════════════════════════════════════════════════════
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

@@ -14,17 +14,17 @@ export async function generateMetadata(): Promise<Metadata> {
   const metadataBase = new URL(`${protocol}://${host}`);
   return {
     metadataBase,
-    title: { default: "Athidhi Family Restaurant", template: "%s · Athidhi" },
-    description: "Family recipes, generous hospitality and effortless table ordering at Athidhi Family Restaurant.",
-    icons: { icon: "/athidhi-logo.png", shortcut: "/athidhi-logo.png" },
+    title: { default: "Athidi Family Restaurant", template: "%s · Athidi" },
+    description: "Family recipes, generous hospitality and effortless table ordering at Athidi Family Restaurant.",
+    icons: { icon: "/athidi-logo.png", shortcut: "/athidi-logo.png" },
     openGraph: {
       type: "website",
-      siteName: "Athidhi Family Restaurant",
-      title: "Athidhi Family Restaurant",
+      siteName: "Athidi Family Restaurant",
+      title: "Athidi Family Restaurant",
       description: "Made with heart. Served like family.",
-      images: [{ url: "/og-v2.png", width: 1734, height: 907, alt: "Athidhi Family Restaurant — made with heart, served like family" }],
+      images: [{ url: "/og-v2.png", width: 1734, height: 907, alt: "Athidi Family Restaurant — made with heart, served like family" }],
     },
-    twitter: { card: "summary_large_image", title: "Athidhi Family Restaurant", description: "Made with heart. Served like family.", images: ["/og-v2.png"] },
+    twitter: { card: "summary_large_image", title: "Athidi Family Restaurant", description: "Made with heart. Served like family.", images: ["/og-v2.png"] },
   };
 }
 
